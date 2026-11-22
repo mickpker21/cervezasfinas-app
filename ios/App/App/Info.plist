@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+        <string>CERVEZAS FINAS</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Cervezas Finas requiere acceso a la cámara para tomar fotografías de evidencia en visitas, evaluaciones y escanear códigos QR/barras de enfriadores.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Cervezas Finas requiere acceso a tu galería para adjuntar fotografías de evidencia en visitas, pedidos y evaluaciones.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Cervezas Finas requiere permiso para guardar comprobantes, tickets y fotografías de evidencia en tu dispositivo.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Cervezas Finas utiliza tu ubicación GPS para registrar visitas en ruta, auditorías de punto de venta y mapa de clientes.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Cervezas Finas utiliza tu ubicación GPS para el seguimiento de ruta comercial, entregas y registro de visitas a clientes.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Cervezas Finas utiliza Bluetooth para conectarse a impresoras térmicas portátiles e imprimir tickets de venta.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Cervezas Finas utiliza Bluetooth para conectarse a impresoras térmicas portátiles e imprimir tickets de venta.</string>
+</dict>
+</plist>

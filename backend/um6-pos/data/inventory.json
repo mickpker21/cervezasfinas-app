@@ -1,0 +1,30 @@
+[
+  {
+    "storeCode": "UM6PALMARITO",
+    "sku": "CF-LAT-355",
+    "onHand": 150,
+    "maxLevel": 240,
+    "minLevel": 80
+  },
+  {
+    "storeCode": "UM6PALMARITO",
+    "sku": "CF-RET-940",
+    "onHand": 90,
+    "maxLevel": 150,
+    "minLevel": 45
+  },
+  {
+    "storeCode": "UM6TEHUACAN",
+    "sku": "CF-LAT-355",
+    "onHand": 110,
+    "maxLevel": 200,
+    "minLevel": 70
+  },
+  {
+    "storeCode": "UM6TEHUACAN",
+    "sku": "CF-PREM-500",
+    "onHand": 60,
+    "maxLevel": 120,
+    "minLevel": 30
+  }
+]

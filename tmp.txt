@@ -1,0 +1,251 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ClipboardList, Settings, Images, Wrench } from 'lucide-react';
+import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
+import { useToast } from '@/components/ui/use-toast';
+import { um6Api } from '@/lib/um6Api';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+const TABS = [
+  { id: 'resumen', label: 'Resumen PDV', icon: ClipboardList },
+  { id: 'pedidos', label: 'Pedidos', icon: Settings },
+  { id: 'planogramas', label: 'Planogramas', icon: Images },
+  { id: 'ajustes', label: 'Ajustes de stock', icon: Wrench },
+];
+
+const movementOptions = [
+  { value: 'ADJUSTMENT', label: 'Ajuste' },
+  { value: 'STOCK_IN', label: 'Entrada manual' },
+  { value: 'STOCK_OUT', label: 'Salida manual' },
+];
+
+const statusStyles = {
+  IN_TRANSIT: 'text-yellow-300',
+  SENT: 'text-yellow-300',
+  RECEIVED: 'text-green-400',
+  REJECTED: 'text-red-400',
+  DRAFT: 'text-gray-300',
+};
+
+export default function Um6ManagerPage() {
+  const { getAccessToken } = useSupabaseAuth();
+  const { toast } = useToast();
+
+  const [activeTab, setActiveTab] = useState('resumen');
+  const [orders, setOrders] = useState([]);
+  const [planograms, setPlanograms] = useState([]);
+  const [orderFilter, setOrderFilter] = useState('');
+  const [planogramFilter, setPlanogramFilter] = useState('');
+
+  const [storeCode, setStoreCode] = useState('');
+  const [storeInfo, setStoreInfo] = useState(null);
+  const [storeInventory, setStoreInventory] = useState([]);
+  const [loadingStore, setLoadingStore] = useState(false);
+
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const [orderForm, setOrderForm] = useState({ storeCode: '', productId: '', quantity: '', notes: '' });
+  const [planogramDialogOpen, setPlanogramDialogOpen] = useState(false);
+  const [planogramForm, setPlanogramForm] = useState({ storeCode: '', fileUrl: '', version: '' });
+  const [movementDialogOpen, setMovementDialogOpen] = useState(false);
+  const [movementForm, setMovementForm] = useState({ storeCode: '', productId: '', quantity: '', type: 'ADJUSTMENT', reference: '' });
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [savingPlanogram, setSavingPlanogram] = useState(false);
+  const [savingMovement, setSavingMovement] = useState(false);
+
+  const fetchOrders = useCallback(async () => {
+    try {
+      const token = await getAccessToken();
+      const data = await um6Api.listOrders(token, orderFilter.trim() || undefined);
+      setOrders(data || []);
+    } catch (error) {
+      toast({ title: 'No se pudieron cargar los pedidos', description: error.message, variant: 'destructive' });
+    }
+  }, [getAccessToken, orderFilter, toast]);
+
+  const fetchPlanograms = useCallback(async () => {
+    try {
+      const token = await getAccessToken();
+      const data = await um6Api.listPlanograms(token, planogramFilter.trim() || undefined);
+      setPlanograms(data || []);
+    } catch (error) {
+      toast({ title: 'No se pudieron cargar los planogramas', description: error.message, variant: 'destructive' });
+    }
+  }, [getAccessToken, planogramFilter, toast]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
+
+  useEffect(() => {
+    fetchPlanograms();
+  }, [fetchPlanograms]);
+
+  const loadStore = async () => {
+    if (!storeCode.trim()) {
+      toast({ title: 'Ingresa el código del PDV', variant: 'destructive' });
+      return;
+    }
+    setLoadingStore(true);
+    try {
+      const token = await getAccessToken();
+      const store = await um6Api.getStore(token, storeCode.trim());
+      const inventory = await um6Api.getInventory(token, storeCode.trim());
+      setStoreInfo(store);
+      setStoreInventory(inventory?.items || []);
+    } catch (error) {
+      setStoreInfo(null);
+      setStoreInventory([]);
+      toast({ title: 'No se pudo cargar el PDV', description: error.message, variant: 'destructive' });
+    } finally {
+      setLoadingStore(false);
+    }
+  };
+
+  const suggestedRows = useMemo(() => {
+    if (!storeInventory.length) return [];
+    return storeInventory.map((item) => {
+      const max = Number(item.max_level ?? 0);
+      const onHand = Number(item.on_hand ?? 0);
+      return {
+        ...item,
+        suggested: Math.max(max - onHand, 0),
+      };
+    });
+  }, [storeInventory]);
+
+  const handleCreateOrder = async (event) => {
+    event.preventDefault();
+    if (!orderForm.storeCode || !orderForm.productId || !orderForm.quantity) {
+      toast({ title: 'Completa todos los campos requeridos', variant: 'destructive' });
+      return;
+    }
+    setSavingOrder(true);
+    try {
+      const token = await getAccessToken();
+      await um6Api.createOrder(token, {
+        storeCode: orderForm.storeCode.trim(),
+        notes: orderForm.notes || undefined,
+        items: [
+          {
+            productId: Number(orderForm.productId),
+            quantity: Number(orderForm.quantity),
+          },
+        ],
+      });
+      toast({ title: 'Pedido creado', description: 'Se envió al POS del PDV.' });
+      setOrderDialogOpen(false);
+      setOrderForm({ storeCode: '', productId: '', quantity: '', notes: '' });
+      fetchOrders();
+    } catch (error) {
+      toast({ title: 'No se pudo crear el pedido', description: error.message, variant: 'destructive' });
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+
+  const handlePlanogramSubmit = async (event) => {
+    event.preventDefault();
+    if (!planogramForm.storeCode || !planogramForm.fileUrl) {
+      toast({ title: 'Ingresa PDV y URL del planograma', variant: 'destructive' });
+      return;
+    }
+    setSavingPlanogram(true);
+    try {
+      const token = await getAccessToken();
+      await um6Api.createPlanogram(token, {
+        storeCode: planogramForm.storeCode.trim(),
+        fileUrl: planogramForm.fileUrl.trim(),
+        version: planogramForm.version ? Number(planogramForm.version) : undefined,
+      });
+      toast({ title: 'Planograma guardado' });
+      setPlanogramDialogOpen(false);
+      setPlanogramForm({ storeCode: '', fileUrl: '', version: '' });
+      fetchPlanograms();
+    } catch (error) {
+      toast({ title: 'No se pudo guardar', description: error.message, variant: 'destructive' });
+    } finally {
+      setSavingPlanogram(false);
+    }
+  };
+
+  const handleMovementSubmit = async (event) => {
+    event.preventDefault();
+    if (!movementForm.storeCode || !movementForm.productId || !movementForm.quantity) {
+      toast({ title: 'Completa todos los campos requeridos', variant: 'destructive' });
+      return;
+    }
+    setSavingMovement(true);
+    try {
+      const token = await getAccessToken();
+      await um6Api.registerMovement(token, {
+        storeCode: movementForm.storeCode.trim(),
+        type: movementForm.type,
+        reference: movementForm.reference || undefined,
+        items: [
+          {
+            productId: Number(movementForm.productId),
+            quantity: Number(movementForm.quantity),
+          },
+        ],
+      });
+      toast({ title: 'Movimiento aplicado' });
+      setMovementDialogOpen(false);
+      setMovementForm({ storeCode: '', productId: '', quantity: '', type: movementForm.type, reference: '' });
+      if (storeInfo && storeInfo.code === movementForm.storeCode.trim()) {
+        loadStore();
+      }
+    } catch (error) {
+      toast({ title: 'No se pudo aplicar el movimiento', description: error.message, variant: 'destructive' });
+    } finally {
+      setSavingMovement(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 text-white">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-gray-400 uppercase tracking-wide">Gerencia · UM6</p>
+          <h1 className="text-3xl font-bold">Control de PDVs</h1>
+          <p className="text-sm text-gray-400">Genera pedidos, administra planogramas y aplica ajustes.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row">
+          <Button variant="outline" onClick={fetchOrders}>
+            Refrescar pedidos
+          </Button>
+          <Button variant="outline" onClick={fetchPlanograms}>
+            Refrescar planogramas
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-4">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-3 rounded-lg border px-4 py-3 transition ${
+              activeTab === tab.id
+                ? 'border-green-400 bg-green-400/10'
+                : 'border-white/10 bg-white/5 hover:border-green-400/60'
+            }`}
+          >
+            <tab.icon className="h-5 w-5" />
+            <span className="font-semibold">{tab.label}</span>
+          </button>
+        ))}
+      </div>
+
+  [content truncated due to length]

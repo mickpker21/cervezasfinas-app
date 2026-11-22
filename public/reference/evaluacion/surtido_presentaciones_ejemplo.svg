@@ -1,0 +1,22 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='800' height='400' viewBox='0 0 800 400'>
+  <rect width='100%' height='100%' fill='#f8fafc'/>
+  <text x='20' y='30' font-family='Arial' font-size='18' fill='#0f172a'>Surtido - Presentaciones sugeridas</text>
+  <g transform='translate(20,60)'>
+    <rect x='0' y='0' width='150' height='260' rx='8' fill='white' stroke='#94a3b8'/>
+    <text x='10' y='25' font-size='14' fill='#0f172a'>1/4</text>
+    <rect x='10' y='40' width='130' height='25' fill='#22c55e'/>
+    <text x='10' y='85' font-size='14' fill='#0f172a'>12oz</text>
+    <rect x='10' y='100' width='130' height='25' fill='#22c55e'/>
+    <text x='10' y='145' font-size='14' fill='#0f172a'>355ml</text>
+    <rect x='10' y='160' width='130' height='25' fill='#22c55e'/>
+    <text x='10' y='205' font-size='14' fill='#0f172a'>473ml</text>
+    <rect x='10' y='220' width='130' height='25' fill='#22c55e'/>
+  </g>
+  <g transform='translate(200,60)'>
+    <rect x='0' y='0' width='580' height='260' rx='8' fill='white' stroke='#94a3b8'/>
+    <text x='10' y='25' font-size='14' fill='#0f172a'>Ejemplo de surtido con 80%+</text>
+    <rect x='10' y='40' width='560' height='12' fill='#e2e8f0'/>
+    <rect x='10' y='40' width='448' height='12' fill='#22c55e'/>
+    <text x='10' y='70' font-size='12' fill='#334155'>Suma de presentaciones marcadas / total de presentaciones</text>
+  </g>
+</svg>

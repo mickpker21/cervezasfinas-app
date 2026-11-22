@@ -1,0 +1,20 @@
+[
+  {
+    "sku": "CF-LAT-355",
+    "name": "Cerveza Fina Lata 355 ml",
+    "category": "Lager",
+    "uom": "caja"
+  },
+  {
+    "sku": "CF-RET-940",
+    "name": "Cerveza Fina Retornable 940 ml",
+    "category": "Retornable",
+    "uom": "caja"
+  },
+  {
+    "sku": "CF-PREM-500",
+    "name": "Cerveza Fina Premium 500 ml",
+    "category": "Especialidad",
+    "uom": "six"
+  }
+]

@@ -1,0 +1,1 @@
+CREATE INDEX idx_ventas_por_sku_period_date ON public.ventas_por_sku(period_date);

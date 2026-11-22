@@ -1,0 +1,17 @@
+ALTER TABLE clients
+ADD COLUMN cross_street VARCHAR(255) NULL,
+ADD COLUMN exterior_number VARCHAR(50) NULL,
+ADD COLUMN interior_number VARCHAR(50) NULL,
+ADD COLUMN colony VARCHAR(255) NULL,
+ADD COLUMN postal_code VARCHAR(10) NULL,
+ADD COLUMN city VARCHAR(100) NULL,
+ADD COLUMN state VARCHAR(100) NULL,
+ADD COLUMN reference TEXT NULL,
+ADD COLUMN sales_modality ENUM('Autoventa', 'Preventa', 'Televenta') NULL,
+ADD COLUMN ritmo ENUM('Semanal', 'Quincenal', 'Mensual') NULL,
+ADD COLUMN rfc VARCHAR(20) NULL,
+ADD COLUMN fiscal_name VARCHAR(255) NULL,
+ADD COLUMN fiscal_address TEXT NULL,
+ADD COLUMN fiscal_colony VARCHAR(255) NULL,
+ADD COLUMN fiscal_postal_code VARCHAR(10) NULL,
+ADD COLUMN cedula_ieps VARCHAR(50) NULL;

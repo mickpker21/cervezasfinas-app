@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: cervezas-finas-api
+    env: node
+    plan: free
+    autoDeploy: true
+    pullRequestPreviewsEnabled: true
+    buildCommand: "npm install"
+    startCommand: "npm run api"
+    envVars:
+      - key: SUPABASE_URL
+        fromSecret: SUPABASE_URL
+      - key: SUPABASE_SERVICE_KEY
+        fromSecret: SUPABASE_SERVICE_KEY
+      - key: PORT
+        value: 4000
+
+  - type: static
+    name: cervezas-finas-frontend
+    plan: free
+    autoDeploy: true
+    pullRequestPreviewsEnabled: true
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: "/*"
+        destination: "/index.html"

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Test de APIs</title>
+    <style>
+        body {
+            font-family: Arial;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .test {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .test h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+
+        .success {
+            color: #22c55e;
+            font-weight: bold;
+        }
+
+        .error {
+            color: #ef4444;
+            font-weight: bold;
+        }
+
+        .response {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow: auto;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔍 Test de APIs - E-Commerce Shop</h1>
+
+    <div class="test">
+        <h3>1. Test: Productos (GET)</h3>
+        <button onclick="testProducts()">Probar /products/list.php</button>
+        <div id="products-result"></div>
+    </div>
+
+    <div class="test">
+        <h3>2. Test: Calcular Precio (POST)</h3>
+        <button onclick="testCalculatePrice()">Probar /products/calculate-price.php</button>
+        <div id="price-result"></div>
+    </div>
+
+    <div class="test">
+        <h3>3. Test: Balance de Puntos (GET con Auth)</h3>
+        <button onclick="testPointsBalance()">Probar /points/balance.php</button>
+        <div id="points-result"></div>
+    </div>
+
+    <div class="test">
+        <h3>4. Test: Productos Canjeables (GET)</h3>
+        <button onclick="testRedemptionProducts()">Probar /points/redemption-products.php</button>
+        <div id="redemption-result"></div>
+    </div>
+
+    <div class="test">
+        <h3>5. Test: Fotos de Referencia (GET)</h3>
+        <button onclick="testCoolerPhotos()">Probar /cooler/reference-photos.php</button>
+        <div id="cooler-result"></div>
+    </div>
+
+    <script>
+        const API_URL = 'https://cervezasfinas.com/api/shop';
+        const token = localStorage.getItem('shop_token');
+
+        async function testAPI(endpoint, options = {}) {
+            try {
+                const headers = { 'Content-Type': 'application/json', ...options.headers };
+                if (token && options.useAuth !== false) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+
+                const response = await fetch(API_URL + endpoint, {
+                    ...options,
+                    headers
+                });
+
+                const data = await response.json();
+                return {
+                    ok: response.ok,
+                    status: response.status,
+                    data
+                };
+            } catch (error) {
+                return {
+                    ok: false,
+                    error: error.message
+                };
+            }
+        }
+
+        function showResult(elementId, result) {
+            const el = document.getElementById(elementId);
+            const status = result.ok ?
+                `<span class="success">✅ SUCCESS (${result.status})</span>` :
+                `<span class="error">❌ ERROR (${result.status || 'Network'})</span>`;
+
+            const response = JSON.stringify(result.data || result.error, null, 2);
+            el.innerHTML = status + `<div class="response">${response}</div>`;
+        }
+
+        async function testProducts() {
+            const result = await testAPI('/products/list.php', { useAuth: false });
+            showResult('products-result', result);
+        }
+
+        async function testCalculatePrice() {
+            const result = await testAPI('/products/calculate-price.php', {
+                method: 'POST',
+                useAuth: false,
+                body: JSON.stringify({ sku: 'CORONA355', quantity: 1 })
+            });
+            showResult('price-result', result);
+        }
+
+        async function testPointsBalance() {
+            if (!token) {
+                showResult('points-result', { ok: false, error: 'No hay token (necesitas login)' });
+                return;
+            }
+            const result = await testAPI('/points/balance.php');
+            showResult('points-result', result);
+        }
+
+        async function testRedemptionProducts() {
+            const result = await testAPI('/points/redemption-products.php', { useAuth: false });
+            showResult('redemption-result', result);
+        }
+
+        async function testCoolerPhotos() {
+            const result = await testAPI('/cooler/reference-photos.php', { useAuth: false });
+            showResult('cooler-result', result);
+        }
+
+        // Auto-test al cargar
+        window.onload = () => {
+            console.log('Token actual:', token || 'No hay token');
+            // testProducts(); // Descomentar para auto-test
+        };
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.vite/
+.cache/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / system
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Tests / coverage
+coverage/
+
+# Misc
+*.sqlite
+backend/um6-pos/uploads/
+
+# Server-only shop API credentials
+cervezasfinas-shop/api/config.local.php
+api/shop/config.local.php
+backend_scripts/firebase-service-account.json
+*service-account*.json
+SUBIR_A_GITHUB_IOS.bat
+
+# Desktop EXE & OTA build outputs
+release-exe/
+build-exe-staging/
+ota-update.zip
+cervezasfinas-shop/dist/
+scratch/
+public/*.apk
+*.apk

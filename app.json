@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "e459f083-717f-4581-999c-18b7234a052a"
+      }
+    },
+    "android": {
+      "package": "com.mickpker.cervezasfinascrm"
+    }
+  }
+}

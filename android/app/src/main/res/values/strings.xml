@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CERVEZAS FINAS</string>
+    <string name="title_activity_main">CERVEZAS FINAS</string>
+    <string name="package_name">com.cervezasfinas.www</string>
+    <string name="custom_url_scheme">com.cervezasfinas.www</string>
+</resources>

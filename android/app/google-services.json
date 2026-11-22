@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "228128852693",
+    "project_id": "cervezas-finas",
+    "storage_bucket": "cervezas-finas.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:228128852693:android:b52ad12ca58733254f705c",
+        "android_client_info": {
+          "package_name": "com.cervezasfinas.www"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB3Q_7WHES4Gy69-KrORNs76C0yqRk3qkI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

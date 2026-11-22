@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<!-- Favicon: usa el logo en /public/logo.png -->
+	<link rel="icon" type="image/png" sizes="32x32" href="/logo6.png" />
+	<link rel="icon" href="/logo6.png" />
+	<link rel="apple-touch-icon" href="/logo.png" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+	<meta name="apple-mobile-web-app-title" content="Cervezas Finas" />
+	<meta name="theme-color" content="#0a0e14" />
+	<link rel="manifest" href="/manifest.webmanifest" />
+	<!-- generator removed -->
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Cervezas Finas - CRM</title>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+	<script>
+		// EMERGENCY FIX: Unregister all Service Workers to clear stale cache
+		if ('serviceWorker' in navigator) {
+			navigator.serviceWorker.getRegistrations().then(function (registrations) {
+				for (let registration of registrations) {
+					registration.unregister();
+					console.log('Emergency SW Unregister:', registration);
+				}
+			});
+		}
+	</script>
+</head>
+
+<body>
+	<div id="root"></div>
+	<script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>

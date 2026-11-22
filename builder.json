@@ -1,0 +1,17 @@
+{
+  "project": "V",
+  "platform": "ios",
+  "github": {
+    "owner": "mickpker21",
+    "repo": "cervezasfinas-app"
+  },
+  "ios": {
+    "path": "ios/App",
+    "scheme": "App"
+  },
+  "flutter": {
+    "watch": {}
+  },
+  "reactNative": {},
+  "mobai": {}
+}

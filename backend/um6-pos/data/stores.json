@@ -1,0 +1,18 @@
+[
+  {
+    "code": "UM6PALMARITO",
+    "name": "PDV Palmarito",
+    "address": "Palmarito Tochapan, Puebla",
+    "managerEmail": "gerente@cervezasfinas.com",
+    "maxCapacity": 1200,
+    "minCapacity": 300
+  },
+  {
+    "code": "UM6TEHUACAN",
+    "name": "PDV Tehuacán Centro",
+    "address": "Av. Reforma 120, Tehuacán, Puebla",
+    "managerEmail": "gerente@cervezasfinas.com",
+    "maxCapacity": 900,
+    "minCapacity": 240
+  }
+]

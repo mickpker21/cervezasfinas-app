@@ -1,0 +1,208 @@
+/* Scrollbar universal para formularios y diálogos */
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+.scrollbar-thumb-green-600::-webkit-scrollbar-thumb {
+  background: #16a34a;
+  border-radius: 8px;
+}
+.scrollbar-track-transparent::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-track-gray-200::-webkit-scrollbar-track {
+  background: #e5e7eb;
+  border-radius: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+/* Scrollbar global estilo azul (similar al ejemplo) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #38bdf8 #020617; /* thumb, track */
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: #020617;
+}
+*::-webkit-scrollbar-thumb {
+  background-image: linear-gradient(180deg, #38bdf8, #6366f1);
+  border-radius: 9999px;
+  border: 2px solid #020617;
+}
+
+/* Scrollbar personalizado */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #3b82f6 rgba(15, 23, 42, 0.6);
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.5);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.8);
+}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+ 
+@layer base {
+  :root {
+    --background: 224 71% 4%;
+    --foreground: 210 40% 98%;
+ 
+    --card: 224 71% 4%;
+    --card-foreground: 210 40% 98%;
+ 
+    --popover: 224 71% 4%;
+    --popover-foreground: 210 40% 98%;
+ 
+    /* Green from logo */
+    --primary: 85 52% 43%;
+    --primary-foreground: 210 40% 98%;
+ 
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 40% 98%;
+ 
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 20% 65%;
+ 
+    --accent: 215 28% 17%;
+    --accent-foreground: 210 40% 98%;
+ 
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 85 52% 43%;
+ 
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 224 71% 4%;
+    --foreground: 210 40% 98%;
+ 
+    --card: 224 71% 4%;
+    --card-foreground: 210 40% 98%;
+ 
+    --popover: 224 71% 4%;
+    --popover-foreground: 210 40% 98%;
+ 
+    --primary: 85 52% 43%;
+    --primary-foreground: 210 40% 98%;
+ 
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 40% 98%;
+ 
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 20% 65%;
+ 
+    --accent: 215 28% 17%;
+    --accent-foreground: 210 40% 98%;
+ 
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 85 52% 43%;
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  color-scheme: dark;
+  
+  /* Disable native text selection and touch callouts (Android context menu bug) */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Re-enable text selection inside inputs to allow typing and copying */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Layout base: permitir que el body sea el contenedor principal de scroll */
+html, body, #root {
+  height: 100%;
+  min-height: 100%;
+  overflow-y: auto;
+}
+
+.heineken-button {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90;
+}
+
+.heineken-card {
+  @apply bg-secondary border-border rounded-lg shadow-lg w-full;
+}
+
+.heineken-input {
+    @apply bg-input border-border placeholder:text-muted-foreground focus:ring-ring;
+}
+
+.map-container-placeholder {
+    @apply w-full h-[400px] bg-gray-700 rounded-lg flex items-center justify-center text-gray-400;
+}
+
+/* CRM accent utilities for quick theming tweaks */
+.crm-accent-text {
+  color: hsl(var(--ring));
+}
+.crm-accent-border {
+  border-color: hsl(var(--ring));
+}
+.crm-accent-soft-bg {
+  background-color: hsl(var(--ring) / 0.10);
+}
+
+/* Leaflet custom colored markers */
+.crm-marker {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px; /* full */
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
+  display: block;
+}
+.crm-marker--green { background-color: #22c55e; } /* Exclusivo */
+.crm-marker--blue { background-color: #3b82f6; }  /* Competencia */
+.crm-marker--yellow { background-color: #f59e0b; } /* Mixto (amber-500) */
+
+/* User location marker */
+.crm-marker--user {
+  background-color: #000000; /* Black */
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 3px rgba(0,0,0,0.25);
+}
