@@ -16,7 +16,7 @@ import { fetchVentasPorSku } from '@/lib/mysqlVentasPorSku'; // Keep for safety 
 import { getSalesBySku } from '@/repositories/salesRepository';
 import { getClientsPaged, getClientsByIds } from '@/repositories/clientsRepository';
 import DonutProgress from '@/components/DonutProgress';
-import { Phone, PhoneCall, ShoppingBag, TrendingUp, Users, Calendar, Search, CheckCircle2, Clock, BarChart3 } from 'lucide-react';
+import { Phone, PhoneCall, ShoppingBag, TrendingUp, Users, Calendar, Search, CheckCircle2, Clock, BarChart3, MapPin } from 'lucide-react';
 import { telephonyCallService } from '@/services/telephonyCallService';
 import { Capacitor } from '@capacitor/core';
 import { getDb } from '@/lib/localDb';
@@ -190,6 +190,7 @@ export default function TeleventaPage() {
   const [effectiveRoute, setEffectiveRoute] = useState(routeFromContext || null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDayFilter, setSelectedDayFilter] = useState(new Date().getDay());
+  const [selectedRouteFilter, setSelectedRouteFilter] = useState('');
   const [assetSerials, setAssetSerials] = useState({});
   const [monthlySalesMap, setMonthlySalesMap] = useState({});
   const [routeMeta, setRouteMeta] = useState(0);
@@ -797,9 +798,42 @@ export default function TeleventaPage() {
     return Math.max(0, Math.min(100, Math.round(ratio * 100)));
   }, [todayRouteHl, dailyHlTarget]);
 
+  const availableRoutes = useMemo(() => {
+    const routesMap = new Map();
+    const addRoute = (raw) => {
+      const clean = String(raw || '').trim().toUpperCase();
+      if (!clean) return;
+      const key = normalizeRouteStrict(clean);
+      if (!key) return;
+      if (!routesMap.has(key)) routesMap.set(key, clean);
+    };
+    if (effectiveRoute) {
+      splitMultiValue(effectiveRoute).forEach(addRoute);
+    }
+    if (routesMap.size === 0) {
+      clients.forEach((client) => {
+        if (client?.sales_route) addRoute(client.sales_route);
+        else if (client?.internal_route) addRoute(client.internal_route);
+      });
+    }
+    return Array.from(routesMap.values()).sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+  }, [effectiveRoute, clients]);
+
   const filteredClients = useMemo(() => {
     const search = (searchTerm || '').toString().toLowerCase();
     return clients
+      .filter((client) => {
+        if (!selectedRouteFilter) return true;
+        const candidates = [
+          client.sales_route,
+          client.internal_route,
+          client.route,
+          client.sale_route,
+          client.salesroute,
+          client.ruta
+        ].filter(Boolean);
+        return candidates.some((r) => isRouteMatchStrict(r, selectedRouteFilter));
+      })
       .filter((client) => {
         if (!search) return true;
         const matchesId = String(client.id || '').toLowerCase().includes(search);
@@ -813,7 +847,7 @@ export default function TeleventaPage() {
         return visitDays.includes(Number(selectedDayFilter));
       })
       .filter((client) => statusByClientId.get(client.id) !== 'bought');
-  }, [clients, searchTerm, selectedDayFilter, statusByClientId]);
+  }, [clients, selectedRouteFilter, searchTerm, selectedDayFilter, statusByClientId]);
 
   const answeredCount = useMemo(() => calls.filter((call) => call.answered).length, [calls]);
   const notAnsweredCount = useMemo(() => calls.filter((call) => !call.answered).length, [calls]);
@@ -1397,7 +1431,7 @@ export default function TeleventaPage() {
                 Clientes
               </span>
               <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-700/70 border border-slate-600 text-slate-300">
-                {clients.length}
+                {selectedRouteFilter ? `${filteredClients.length} / ${clients.length}` : clients.length}
               </span>
             </CardTitle>
           </CardHeader>
@@ -1419,6 +1453,23 @@ export default function TeleventaPage() {
                       className="pl-10 bg-slate-900/60 border-slate-700/80 text-slate-100 placeholder:text-slate-500 rounded-xl focus:border-emerald-500/80 focus:ring-emerald-500/20"
                     />
                   </div>
+                  {availableRoutes.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-emerald-400 shrink-0" />
+                      <select
+                        value={selectedRouteFilter}
+                        onChange={(event) => setSelectedRouteFilter(event.target.value)}
+                        className="rounded-xl border border-slate-700 bg-slate-900/80 px-3 py-2 text-xs font-medium text-slate-200 focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="">Todas mis rutas ({availableRoutes.length})</option>
+                        {availableRoutes.map((route) => (
+                          <option key={route} value={route}>
+                            Ruta {route}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
                     <select

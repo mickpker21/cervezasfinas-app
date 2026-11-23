@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Network } from '@capacitor/network';
-import { initLocalDb } from '@/lib/localDb';
+import { initLocalDb, getDb } from '@/lib/localDb';
 import { syncPendingOperations, syncKioskData } from '@/sync/syncService';
 import { syncProducts } from '@/repositories/productsRepository';
 import { syncPricingData } from '@/repositories/pricingRepository';
@@ -8,6 +8,7 @@ import { syncInstallerData } from '@/repositories/ordersRepository';
 import { getClientsPaged } from '@/repositories/clientsRepository';
 import { fetchShopProducts } from '@/repositories/shopRepository';
 import { api, flushOfflineApiQueue } from '@/lib/api';
+import { getTodayMexico } from '@/lib/dateUtils';
 
 export function useOfflineSync() {
   useEffect(() => {
@@ -33,7 +34,27 @@ export function useOfflineSync() {
           // Precargar padrón de clientes, catálogo Shop con presentaciones y pedidos Televenta en disco para modo Offline
           getClientsPaged({ page: 1, pageSize: 3500, filters: {} }).catch(() => {});
           fetchShopProducts('DEFAULT').catch(() => {});
-          api.get('/televenta/orders-list.php').catch(() => {});
+          const currentMonth = (getTodayMexico() || new Date().toISOString().slice(0, 10)).slice(0, 7);
+          api.get(`/televenta/orders-list.php?month=${encodeURIComponent(currentMonth)}`).then(async (res) => {
+            if (res?.success && Array.isArray(res?.data) && res.data.length > 0) {
+              const cacheKey = `cached_televenta_orders_${currentMonth}`;
+              const db = await getDb().catch(() => null);
+              const existing = db?._storage?.get(cacheKey);
+              const existingOrders = Array.isArray(existing?.orders) ? existing.orders : [];
+              if (existingOrders.length === 0) {
+                const mapped = res.data.map(order => ({
+                  ...order,
+                  source: 'shop',
+                  created_by_name: order.client_name ? `${order.client_name} (Cliente)` : `Cliente Online (${order.client_code})`,
+                  created_by_role: 'Cliente Web',
+                  created_by_type: 'client'
+                }));
+                const payload = { savedAt: Date.now(), orders: mapped };
+                try { db?._storage?.set(cacheKey, payload); } catch {}
+                try { localStorage.setItem(cacheKey, JSON.stringify(payload)); } catch {}
+              }
+            }
+          }).catch(() => {});
           api.get('/televenta/preventa-overrides.php').catch(() => {});
         }
 

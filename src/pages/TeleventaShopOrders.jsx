@@ -10,14 +10,58 @@ import {
     Loader2, Package, Calendar, CheckCircle, XCircle, Clock, 
     MessageSquare, User, Send, Smartphone, ShoppingCart, 
     Search, Filter, MapPin, DollarSign, Truck, AlertCircle, 
-    UserCheck, Store, RefreshCw, Trash2, FileDown, Share2, Sparkles, ArrowUpDown, Phone
+    UserCheck, Store, RefreshCw, Trash2, FileDown, Share2, Sparkles, ArrowUpDown, Phone, WifiOff
 } from 'lucide-react';
 import { useToast } from "@/components/ui/use-toast";
+import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase } from '../supabaseClient';
 import { API_URL, getShopAuthHeaders } from '@/lib/api';
+import { getDb } from '@/lib/localDb';
 import { getClientByCode } from '@/repositories/clientsRepository';
 import { awardPreventaPoints, deliverPreventa } from '@/lib/preventaPoints';
 import ReceiptModal from '@/components/ReceiptModal';
+
+const FULL_ACCESS_ORDER_ROLES = new Set([
+    'admin',
+    'administrador',
+    'sistemas',
+    'sistemashop',
+    'gerente',
+    'operaciones',
+    'jefe de operaciones',
+    'supervisor',
+    'jefe de ventas'
+]);
+
+const normalizeRouteKey = (r) => String(r || '').trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
+
+const splitRouteValues = (raw) => {
+    if (raw == null) return [];
+    if (Array.isArray(raw)) return raw.map(v => String(v || '').trim()).filter(Boolean);
+    const text = String(raw).trim();
+    if (!text) return [];
+    if (text.startsWith('[')) {
+        try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) return parsed.map(v => String(v || '').trim()).filter(Boolean);
+        } catch {}
+    }
+    return text.split(/[,;|]/).map(v => v.trim()).filter(Boolean);
+};
+
+const routeMatchesAllowed = (orderRoute, allowedRoutes) => {
+    if (!Array.isArray(allowedRoutes) || allowedRoutes.length === 0) return true;
+    const normOrder = normalizeRouteKey(orderRoute);
+    if (!normOrder) return false;
+    const numOrder = parseInt(normOrder, 10);
+    return allowedRoutes.some(target => {
+        const normTarget = normalizeRouteKey(target);
+        if (!normTarget) return false;
+        if (normOrder === normTarget) return true;
+        const numTarget = parseInt(normTarget, 10);
+        return !Number.isNaN(numOrder) && !Number.isNaN(numTarget) && numOrder === numTarget;
+    });
+};
 
 const MEXICO_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Mexico_City',
@@ -45,10 +89,13 @@ const getPreviousMonthMexico = () => {
 };
 
 export default function TeleventaShopOrders() {
+    const { user } = useSupabaseAuth();
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [ordersError, setOrdersError] = useState('');
     const [ordersWarning, setOrdersWarning] = useState('');
+    const [offlineCacheNotice, setOfflineCacheNotice] = useState('');
+    const [allowedRoutes, setAllowedRoutes] = useState([]);
     
     // Filters State - Por defecto carga únicamente el MES ACTUAL para máxima velocidad
     const [searchTerm, setSearchTerm] = useState('');
@@ -90,6 +137,60 @@ export default function TeleventaShopOrders() {
     useEffect(() => {
         loadProducts();
     }, []);
+
+    // Resolver rutas permitidas del usuario (Televenta solo ve sus rutas asignadas; Admin/Gerente/Sistemas ven todas)
+    useEffect(() => {
+        if (!user?.id) {
+            setAllowedRoutes([]);
+            return;
+        }
+        let cancelled = false;
+        const resolveAllowedRoutes = async () => {
+            const metaRole = String(user?.user_metadata?.role || user?.role || '').trim().toLowerCase();
+            let finalRole = metaRole;
+            let rawRoute = user?.user_metadata?.route || user?.user_metadata?.ruta || null;
+            try {
+                if (!rawRoute) {
+                    rawRoute = localStorage.getItem(`televenta_user_route_${user.id}`) || null;
+                }
+            } catch {}
+
+            if (!FULL_ACCESS_ORDER_ROLES.has(finalRole) && typeof navigator !== 'undefined' && navigator.onLine !== false) {
+                try {
+                    const { data: profileRows } = await supabase
+                        .from('profiles')
+                        .select('role, route')
+                        .eq('id', user.id)
+                        .limit(1);
+                    if (Array.isArray(profileRows) && profileRows.length > 0) {
+                        if (profileRows[0]?.role) {
+                            finalRole = String(profileRows[0].role).trim().toLowerCase();
+                        }
+                        if (profileRows[0]?.route) {
+                            rawRoute = profileRows[0].route;
+                            try {
+                                localStorage.setItem(`televenta_user_route_${user.id}`, String(rawRoute));
+                            } catch {}
+                        }
+                    }
+                } catch {}
+            } else if (rawRoute) {
+                try {
+                    localStorage.setItem(`televenta_user_route_${user.id}`, String(rawRoute));
+                } catch {}
+            }
+
+            if (cancelled) return;
+            if (FULL_ACCESS_ORDER_ROLES.has(finalRole)) {
+                setAllowedRoutes([]);
+            } else {
+                const parsed = splitRouteValues(rawRoute);
+                setAllowedRoutes(parsed);
+            }
+        };
+        resolveAllowedRoutes();
+        return () => { cancelled = true; };
+    }, [user?.id, user?.user_metadata?.role, user?.user_metadata?.route, user?.user_metadata?.ruta]);
 
     // Cargar únicamente los pedidos del mes seleccionado (por defecto: mes actual)
     useEffect(() => {
@@ -145,8 +246,74 @@ export default function TeleventaShopOrders() {
         setLoading(true);
         setOrdersError('');
         setOrdersWarning('');
+        setOfflineCacheNotice('');
 
         const activeMonth = typeof targetMonth === 'string' ? targetMonth : monthFilter;
+        const cacheKey = `cached_televenta_orders_${activeMonth || 'all'}`;
+
+        const saveCachedOrders = async (ordersList) => {
+            const payload = { savedAt: Date.now(), orders: ordersList };
+            try {
+                const db = await getDb();
+                db?._storage?.set(cacheKey, payload);
+            } catch {}
+            try {
+                localStorage.setItem(cacheKey, JSON.stringify(payload));
+            } catch {}
+        };
+
+        const readCachedOrders = async () => {
+            try {
+                const db = await getDb();
+                const fromDb = db?._storage?.get(cacheKey);
+                if (fromDb && Array.isArray(fromDb.orders)) return fromDb;
+                if (Array.isArray(fromDb)) return { orders: fromDb, savedAt: null };
+            } catch {}
+            try {
+                const raw = localStorage.getItem(cacheKey);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed?.orders)) return parsed;
+                    if (Array.isArray(parsed)) return { orders: parsed, savedAt: null };
+                }
+            } catch {}
+            // Respaldo adicional: caché pre-descargado por useOfflineSync (cf_api_cache:/televenta/orders-list.php)
+            try {
+                const monthKey = `cf_api_cache:/televenta/orders-list.php?month=${encodeURIComponent(activeMonth || '')}`;
+                const rawApi = localStorage.getItem(monthKey) || localStorage.getItem('cf_api_cache:/televenta/orders-list.php');
+                if (rawApi) {
+                    const payload = JSON.parse(rawApi);
+                    if (payload?.success && Array.isArray(payload?.data)) {
+                        return {
+                            orders: payload.data.map(order => ({
+                                ...order,
+                                source: 'shop',
+                                created_by_name: order.client_name ? `${order.client_name} (Cliente)` : `Cliente Online (${order.client_code})`,
+                                created_by_role: 'Cliente Web',
+                                created_by_type: 'client'
+                            })),
+                            savedAt: null
+                        };
+                    }
+                }
+            } catch {}
+            return null;
+        };
+
+        // Si sabemos de antemano que no hay conexión, cargar directo de caché local para respuesta instantánea
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            const cached = await readCachedOrders();
+            if (cached && cached.orders.length > 0) {
+                setOrders(cached.orders);
+                const when = cached.savedAt ? new Date(cached.savedAt).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'reciente';
+                setOfflineCacheNotice(`Modo sin conexión: mostrando ${cached.orders.length} pedidos guardados localmente (última sync: ${when}).`);
+            } else {
+                setOrders([]);
+                setOfflineCacheNotice('Sin conexión a internet. Conéctate una vez con este mes abierto para guardar los pedidos localmente.');
+            }
+            setLoading(false);
+            return;
+        }
 
         // Calcular rango de fechas para consultar SOLO el mes solicitado en la base de datos
         let startIso = null;
@@ -492,13 +659,40 @@ export default function TeleventaShopOrders() {
             }
 
             loadedOrders.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-            setOrders(loadedOrders);
-            if (loadedOrders.length === 0 && errors.length) setOrdersError(errors.join(' · '));
-            else if (errors.length) setOrdersWarning(`No se cargó una de las fuentes. ${errors.join(' · ')}`);
+
+            if (loadedOrders.length > 0) {
+                setOrders(loadedOrders);
+                await saveCachedOrders(loadedOrders);
+                if (errors.length) setOrdersWarning(`No se cargó una de las fuentes. ${errors.join(' · ')}`);
+            } else if (errors.length) {
+                const cached = await readCachedOrders();
+                if (cached && cached.orders.length > 0) {
+                    setOrders(cached.orders);
+                    const when = cached.savedAt
+                        ? new Date(cached.savedAt).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                        : 'reciente';
+                    setOfflineCacheNotice(`Sin conexión o servidor no disponible: mostrando ${cached.orders.length} pedidos guardados localmente (${when}).`);
+                } else {
+                    setOrders([]);
+                    setOrdersError(errors.join(' · '));
+                }
+            } else {
+                setOrders([]);
+                await saveCachedOrders([]);
+            }
         } catch (error) {
             console.error('Error loading orders:', error);
-            setOrders([]);
-            setOrdersError(error.message || 'Error al consultar los pedidos.');
+            const cached = await readCachedOrders();
+            if (cached && cached.orders.length > 0) {
+                setOrders(cached.orders);
+                const when = cached.savedAt
+                    ? new Date(cached.savedAt).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                    : 'reciente';
+                setOfflineCacheNotice(`Modo sin conexión: mostrando ${cached.orders.length} pedidos guardados localmente (${when}).`);
+            } else {
+                setOrders([]);
+                setOrdersError(error.message || 'Error al consultar los pedidos.');
+            }
         } finally {
             setLoading(false);
         }
@@ -879,11 +1073,32 @@ export default function TeleventaShopOrders() {
         }
     }
 
+    // Pedidos filtrados por las rutas permitidas del usuario (si es Televenta con rutas asignadas)
+    const allowedOrders = useMemo(() => {
+        if (!allowedRoutes || allowedRoutes.length === 0) return orders;
+        const userEmail = String(user?.email || '').trim().toLowerCase();
+        return orders.filter(order => {
+            if (routeMatchesAllowed(order.sales_route, allowedRoutes)) return true;
+            // Si el mismo usuario levantó la preventa pero el cliente no tenía ruta en caché, mostrarla
+            if (userEmail && String(order.created_by_email || '').trim().toLowerCase() === userEmail) return true;
+            return false;
+        });
+    }, [orders, allowedRoutes, user?.email]);
+
     const salesRoutes = useMemo(() => {
-        return [...new Set(orders
-            .map(order => String(order.sales_route || '').trim())
-            .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-    }, [orders]);
+        const set = new Set();
+        allowedOrders.forEach(order => {
+            const r = String(order.sales_route || '').trim();
+            if (r) set.add(r);
+        });
+        if (allowedRoutes && allowedRoutes.length > 0) {
+            allowedRoutes.forEach(r => {
+                const clean = String(r || '').trim();
+                if (clean) set.add(clean);
+            });
+        }
+        return [...set].sort((a, b) => a.localeCompare(b, 'es'));
+    }, [allowedOrders, allowedRoutes]);
 
     const mexicoOrderDay = value => {
         if (!value) return '';
@@ -917,7 +1132,7 @@ export default function TeleventaShopOrders() {
 
     // Filter and sort orders (Always Newest First by default!)
     const visibleOrders = useMemo(() => {
-        const filtered = orders.filter(order => {
+        const filtered = allowedOrders.filter(order => {
             const orderMonth = mexicoOrderMonth(order.created_at);
             const matchesMonth = !monthFilter || monthFilter === 'all' || orderMonth === monthFilter;
 
@@ -926,7 +1141,7 @@ export default function TeleventaShopOrders() {
             
             const route = String(order.sales_route || '').trim();
             const matchesRoute = !salesRouteFilter
-                || (salesRouteFilter === '__no_route__' ? !route : route === salesRouteFilter);
+                || (salesRouteFilter === '__no_route__' ? !route : routeMatchesAllowed(route, [salesRouteFilter]));
             
             const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
             const matchesSource = sourceFilter === 'all' || order.source === sourceFilter;
@@ -963,12 +1178,12 @@ export default function TeleventaShopOrders() {
             // Default: 'newest' -> Newest orders first
             return (timeB - timeA) || idDiff;
         });
-    }, [orders, monthFilter, orderDateFilter, salesRouteFilter, statusFilter, sourceFilter, searchTerm, sortBy]);
+    }, [allowedOrders, monthFilter, orderDateFilter, salesRouteFilter, statusFilter, sourceFilter, searchTerm, sortBy]);
 
     // KPI Counters for currently filtered scope (e.g. Current Month)
     const kpis = useMemo(() => {
-        // Calculate based on the selected month
-        const scopedOrders = orders.filter(order => {
+        // Calculate based on the selected month (and user's allowed routes)
+        const scopedOrders = allowedOrders.filter(order => {
             const orderMonth = mexicoOrderMonth(order.created_at);
             return !monthFilter || monthFilter === 'all' || orderMonth === monthFilter;
         });
@@ -979,7 +1194,7 @@ export default function TeleventaShopOrders() {
         const delivered = scopedOrders.filter(o => o.status === 'delivered').length;
         const totalAmount = scopedOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
         return { total, pending, confirmed, delivered, totalAmount };
-    }, [orders, monthFilter]);
+    }, [allowedOrders, monthFilter]);
 
     const getStatusBadge = (status) => {
         const badges = {
@@ -1011,7 +1226,15 @@ export default function TeleventaShopOrders() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Pedidos & Televenta</h1>
-                    <p className="text-muted-foreground text-sm mt-1">Gestión de pedidos de tienda online y preventas con trazabilidad del preventista creador.</p>
+                    <p className="text-muted-foreground text-sm mt-1">
+                        Gestión de pedidos de tienda online y preventas con trazabilidad del preventista creador.
+                    </p>
+                    {allowedRoutes.length > 0 && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                            <MapPin className="w-3.5 h-3.5" />
+                            Mostrando solo tus rutas permitidas: {allowedRoutes.join(', ')}
+                        </div>
+                    )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                     <Button
@@ -1118,21 +1341,21 @@ export default function TeleventaShopOrders() {
                                         onClick={() => setSourceFilter('all')}
                                         className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors ${sourceFilter === 'all' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                                     >
-                                        Todas ({orders.length})
+                                        Todas ({allowedOrders.length})
                                     </button>
                                     <button
                                         onClick={() => setSourceFilter('preventa')}
                                         className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors flex items-center gap-1 ${sourceFilter === 'preventa' ? 'bg-background shadow text-purple-400 font-bold' : 'text-muted-foreground hover:text-foreground'}`}
                                     >
                                         <Smartphone className="w-3.5 h-3.5" />
-                                        Preventas ({orders.filter(o => o.source === 'preventa').length})
+                                        Preventas ({allowedOrders.filter(o => o.source === 'preventa').length})
                                     </button>
                                     <button
                                         onClick={() => setSourceFilter('shop')}
                                         className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors flex items-center gap-1 ${sourceFilter === 'shop' ? 'bg-background shadow text-blue-400 font-bold' : 'text-muted-foreground hover:text-foreground'}`}
                                     >
                                         <ShoppingCart className="w-3.5 h-3.5" />
-                                        Tienda Online ({orders.filter(o => o.source === 'shop').length})
+                                        Tienda Online ({allowedOrders.filter(o => o.source === 'shop').length})
                                     </button>
                                 </div>
                             </div>
@@ -1256,9 +1479,9 @@ export default function TeleventaShopOrders() {
                                         onChange={event => setSalesRouteFilter(event.target.value)}
                                         className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs text-foreground"
                                     >
-                                        <option value="">Todas las rutas</option>
+                                        <option value="">{allowedRoutes.length > 0 ? 'Todas mis rutas permitidas' : 'Todas las rutas'}</option>
                                         {salesRoutes.map(route => <option key={route} value={route}>{route}</option>)}
-                                        {orders.some(order => !String(order.sales_route || '').trim()) && (
+                                        {allowedRoutes.length === 0 && allowedOrders.some(order => !String(order.sales_route || '').trim()) && (
                                             <option value="__no_route__">Sin ruta asignada</option>
                                         )}
                                     </select>
@@ -1286,6 +1509,24 @@ export default function TeleventaShopOrders() {
                             </div>
                         </CardContent>
                     </Card>
+
+                    {/* Offline Cache Notice Banner */}
+                    {offlineCacheNotice && (
+                        <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-xs font-medium flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                                <WifiOff className="w-4 h-4 shrink-0 text-amber-400" />
+                                <span>{offlineCacheNotice}</span>
+                            </div>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => loadOrders(monthFilter)}
+                                className="h-7 text-[11px] border-amber-500/40 text-amber-200 hover:bg-amber-500/20 shrink-0"
+                            >
+                                Reintentar
+                            </Button>
+                        </div>
+                    )}
 
                     {/* Orders List Content */}
                     {loading ? (

@@ -324,7 +324,12 @@ function registerIpcHandlers() {
 
 async function createWindow() {
   const port = await startLocalServer();
-  const iconPath = path.join(getBuiltinDistDir(), 'logo6.png');
+  const iconCandidates = [
+    path.join(__dirname, 'icon.ico'),
+    path.join(getBuiltinDistDir(), 'logo6.png'),
+    path.join(getBuiltinDistDir(), 'logo.png'),
+  ];
+  const iconPath = iconCandidates.find((p) => fs.existsSync(p));
 
   mainWindow = new BrowserWindow({
     width: 1366,
@@ -332,7 +337,7 @@ async function createWindow() {
     minWidth: 1024,
     minHeight: 680,
     title: 'Cervezas Finas CRM',
-    icon: fs.existsSync(iconPath) ? iconPath : undefined,
+    icon: iconPath || undefined,
     backgroundColor: '#020617',
     autoHideMenuBar: true,
     webPreferences: {

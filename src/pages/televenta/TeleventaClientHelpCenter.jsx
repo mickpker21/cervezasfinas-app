@@ -15,7 +15,7 @@ import {
     MessageSquare, Send, RefreshCw, Unlink, Link2, CheckCircle2, Clock,
     Package, FileDown, Edit3, Plus, Trash2, Bot, Sparkles, Copy,
     ExternalLink, Award, AlertCircle, PauseCircle, PlayCircle, Headphones,
-    Calendar, Eye
+    Calendar, Eye, X
 } from 'lucide-react';
 import {
     Dialog,
@@ -130,6 +130,7 @@ export default function TeleventaClientHelpCenter() {
     const [chatTab, setChatTab] = useState('support'); // 'support' | 'bot_logs'
     const [replyMessage, setReplyMessage] = useState('');
     const [sendingReply, setSendingReply] = useState(false);
+    const [closingRequestCode, setClosingRequestCode] = useState('');
     const chatBottomRef = useRef(null);
 
     // Order Modification & Ticket State
@@ -711,6 +712,48 @@ export default function TeleventaClientHelpCenter() {
         }
     }
 
+    async function handleCloseAdvisorRequest(targetCode, e) {
+        if (e) e.stopPropagation();
+        const code = String(targetCode || selectedCode || '').trim();
+        if (!code) return;
+        setClosingRequestCode(code);
+        try {
+            const headers = await getShopAuthHeaders({ 'Content-Type': 'application/json' });
+            const res = await fetch(CLIENT_360_API, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    action: 'CLOSE_ADVISOR_REQUEST',
+                    client_code: code
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setAdvisorQueue(prev => prev.filter(item => item.client_code !== code));
+                toast({
+                    title: '✅ Solicitud de asesor cerrada',
+                    description: data.message || `Se marcó como atendida la solicitud de ${code}.`,
+                    className: 'bg-emerald-700 text-white'
+                });
+                loadDashboardAndSearch(searchQuery, true);
+                if (selectedCode === code) {
+                    loadClientDossier(code, true);
+                }
+            } else {
+                toast({
+                    title: 'No se pudo cerrar la solicitud',
+                    description: data.error || 'Intenta nuevamente.',
+                    variant: 'destructive'
+                });
+            }
+        } catch (err) {
+            console.error('Error closing advisor request:', err);
+            toast({ title: 'Error de red al cerrar solicitud', variant: 'destructive' });
+        } finally {
+            setClosingRequestCode('');
+        }
+    }
+
     async function handleResumeBot() {
         if (!selectedCode) return;
         try {
@@ -1002,12 +1045,15 @@ export default function TeleventaClientHelpCenter() {
                             {advisorQueue.map(item => {
                                 const isSel = selectedCode === item.client_code;
                                 const isHuman = item.bot_stage === 'HUMAN';
+                                const isClosing = closingRequestCode === item.client_code;
                                 return (
-                                    <button
+                                    <div
                                         key={item.client_code}
-                                        type="button"
                                         onClick={() => setSelectedCode(item.client_code)}
-                                        className={`shrink-0 text-left px-3.5 py-2 rounded-xl border transition-all flex items-center gap-2.5 max-w-xs ${
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') setSelectedCode(item.client_code); }}
+                                        className={`shrink-0 text-left px-3 py-2 rounded-xl border transition-all flex items-center gap-2.5 max-w-xs cursor-pointer ${
                                             isSel
                                                 ? 'bg-emerald-950/90 border-emerald-400 ring-2 ring-emerald-500/30'
                                                 : isHuman
@@ -1035,7 +1081,20 @@ export default function TeleventaClientHelpCenter() {
                                                 {item.last_message}
                                             </p>
                                         </div>
-                                    </button>
+                                        <button
+                                            type="button"
+                                            disabled={isClosing}
+                                            onClick={(e) => handleCloseAdvisorRequest(item.client_code, e)}
+                                            title="Cerrar / Finalizar esta solicitud de asesor"
+                                            className="shrink-0 p-1.5 rounded-lg bg-slate-800/90 hover:bg-rose-600 text-slate-300 hover:text-white border border-slate-700 hover:border-rose-500 transition-colors disabled:opacity-50"
+                                        >
+                                            {isClosing ? (
+                                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                                <X className="w-3.5 h-3.5" />
+                                            )}
+                                        </button>
+                                    </div>
                                 );
                             })}
                         </div>
@@ -1192,6 +1251,17 @@ export default function TeleventaClientHelpCenter() {
                                 </div>
 
                                 <div className="flex items-center gap-2 flex-wrap">
+                                    {(dossier.whatsapp?.bot_stage === 'HUMAN' || advisorQueue.some(q => q.client_code === selectedCode)) && (
+                                        <Button
+                                            size="sm"
+                                            disabled={closingRequestCode === selectedCode}
+                                            onClick={() => handleCloseAdvisorRequest(selectedCode)}
+                                            className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold h-9 gap-1.5 shadow"
+                                        >
+                                            <CheckCircle2 className="w-3.5 h-3.5" />
+                                            {closingRequestCode === selectedCode ? 'Cerrando...' : 'Cerrar Solicitud de Asesor'}
+                                        </Button>
+                                    )}
                                     {waLink && (
                                         <a
                                             href={waLink}
