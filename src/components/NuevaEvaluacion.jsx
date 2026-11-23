@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { getClientById, updateClient } from '@/repositories/clientsRepository';
 import { loadEvaluationConfig, onEvaluationConfigUpdated, subscribeEvaluationConfig } from '@/lib/evaluationConfig';
 import { getOptionalPositionFast } from '@/lib/geolocation';
+import { DirectCameraField } from '@/components/common/DirectCameraModal';
 import BarcodeScanner from 'react-qr-barcode-scanner';
 
 /** ---------- Constantes y helpers ---------- **/
@@ -706,9 +707,24 @@ export default function NuevaEvaluacion({
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div><Label>Foto fachada <span className="text-red-500">*</span></Label><Input type="file" accept="image/*" capture="environment" onChange={(e) => setFotoFachada(e.target.files?.[0] || null)} /></div>
-            <div><Label>Foto interior <span className="text-red-500">*</span></Label><Input type="file" accept="image/*" capture="environment" onChange={(e) => setFotoInterior(e.target.files?.[0] || null)} /></div>
-            <div><Label>Foto enfriador <span className="text-red-500">*</span></Label><Input type="file" accept="image/*" capture="environment" onChange={(e) => setFotoEnfriador(e.target.files?.[0] || null)} /></div>
+            <DirectCameraField
+              label="Foto fachada"
+              required
+              file={fotoFachada}
+              onCapture={(file) => setFotoFachada(file)}
+            />
+            <DirectCameraField
+              label="Foto interior"
+              required
+              file={fotoInterior}
+              onCapture={(file) => setFotoInterior(file)}
+            />
+            <DirectCameraField
+              label="Foto enfriador"
+              required
+              file={fotoEnfriador}
+              onCapture={(file) => setFotoEnfriador(file)}
+            />
           </div>
           <div className="mt-1 inline-flex items-center gap-2 text-sm">
             {calcularExterior(form) ? (

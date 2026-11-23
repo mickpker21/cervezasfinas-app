@@ -497,24 +497,24 @@ export default function SupervisorOnboardSupervision() {
 
   // UI Components
   const ProgressBar = () => (
-    <div className="flex justify-between items-center mb-8 px-4">
+    <div className="flex justify-between items-center mb-5 px-2">
       {STEPS.map((step, idx) => {
         const Icon = step.icon;
         const isActive = currentStep === idx;
         const isCompleted = currentStep > idx;
         return (
           <div key={step.id} className="flex flex-col items-center flex-1 relative">
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center z-10 transition-all duration-300 ${
+            <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center z-10 transition-all duration-300 ${
               isActive ? 'bg-emerald-500 text-white ring-4 ring-emerald-500/20' : 
               isCompleted ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-400'
             }`}>
-              {isCompleted ? <CheckCircle2 className="w-6 h-6" /> : <Icon className="w-5 h-5" />}
+              {isCompleted ? <CheckCircle2 className="w-5 h-5" /> : <Icon className="w-4 h-4 sm:w-5 sm:h-5" />}
             </div>
-            <span className={`text-xs mt-2 font-medium ${isActive ? 'text-emerald-400' : 'text-slate-500'}`}>
+            <span className={`text-[11px] sm:text-xs mt-1.5 font-medium text-center leading-tight px-1 ${isActive ? 'text-emerald-400' : 'text-slate-500'}`}>
               {step.title}
             </span>
             {idx < STEPS.length - 1 && (
-              <div className={`absolute h-0.5 top-5 left-[50%] w-full z-0 ${currentStep > idx ? 'bg-emerald-600' : 'bg-slate-700'}`} />
+              <div className={`absolute h-0.5 top-4 sm:top-5 left-[50%] w-full z-0 ${currentStep > idx ? 'bg-emerald-600' : 'bg-slate-700'}`} />
             )}
           </div>
         );
@@ -523,15 +523,15 @@ export default function SupervisorOnboardSupervision() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0a0e14] text-slate-200 pb-20">
-      <header className="p-4 border-b border-white/5 bg-slate-900/50 backdrop-blur-md sticky top-0 z-20">
+    <div className="w-full max-w-2xl mx-auto text-slate-200 pb-10">
+      <header className="p-3 sm:p-4 mb-4 rounded-2xl border border-white/10 bg-slate-900/70 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-emerald-500/10 rounded-lg">
-            <ClipboardCheck className="text-emerald-500" />
+          <div className="p-2 bg-emerald-500/10 rounded-xl shrink-0">
+            <ClipboardCheck className="text-emerald-500 w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-lg font-bold">Supervisión a Bordo</h1>
-            <p className="text-xs text-slate-400">Evaluación de ejecución y ventas</p>
+          <div className="min-w-0">
+            <h1 className="text-base sm:text-lg font-bold truncate">Supervisión a Bordo</h1>
+            <p className="text-xs text-slate-400 truncate">Evaluación de ejecución y ventas</p>
           </div>
         </div>
       </header>
@@ -563,7 +563,7 @@ export default function SupervisorOnboardSupervision() {
         )}
       </AnimatePresence>
 
-      <main className="p-4 max-w-2xl mx-auto">
+      <div className="w-full">
         <ProgressBar />
 
         <AnimatePresence mode="wait">
@@ -573,9 +573,9 @@ export default function SupervisorOnboardSupervision() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
+              className="space-y-4 sm:space-y-6"
             >
-              <PremiumCard className="p-6 bg-slate-900/40 border-white/10">
+              <PremiumCard className="p-4 sm:p-6 bg-slate-900/40 border-white/10">
                 <CardHeader className="px-0 pt-0">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Car className="text-emerald-500 w-5 h-5" /> Datos del acompañamiento
@@ -621,7 +621,7 @@ export default function SupervisorOnboardSupervision() {
                 </div>
               </PremiumCard>
 
-              <PremiumCard className="p-6 bg-slate-900/40 border-white/10">
+              <PremiumCard className="p-4 sm:p-6 bg-slate-900/40 border-white/10">
                 <CardHeader className="px-0 pt-0">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <ClipboardCheck className="text-blue-500 w-5 h-5" /> Checklist de salida
@@ -732,11 +732,11 @@ export default function SupervisorOnboardSupervision() {
                 )}
               </div>
 
-              <div className="fixed bottom-6 left-0 right-0 px-4">
+              <div className="sticky bottom-2 z-20 pt-2">
                 <Button 
                   onClick={handleFinishSupervision}
                   disabled={loading || !sessionData?.visits?.length}
-                  className="w-full h-14 bg-slate-100 text-slate-900 font-bold rounded-xl shadow-xl hover:bg-white"
+                  className="w-full h-13 sm:h-14 bg-emerald-500 text-slate-950 font-black rounded-xl shadow-2xl hover:bg-emerald-400"
                 >
                   Finalizar Día de Ruta
                 </Button>
@@ -749,9 +749,9 @@ export default function SupervisorOnboardSupervision() {
               key="step-result"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="space-y-6"
+              className="space-y-4 sm:space-y-6"
             >
-              <PremiumCard className="p-8 text-center bg-gradient-to-br from-slate-900 to-emerald-900/20 border-emerald-500/20 relative overflow-hidden">
+              <PremiumCard className="p-4 sm:p-8 text-center bg-gradient-to-br from-slate-900 to-emerald-900/20 border-emerald-500/20 relative overflow-hidden">
                 <div className="absolute -top-10 -right-10 w-40 h-40 bg-emerald-500/10 blur-[80px] rounded-full" />
                 
                 <h2 className="text-xl font-bold mb-6">Puntaje de Supervisión</h2>
@@ -871,60 +871,58 @@ export default function SupervisorOnboardSupervision() {
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
+      </div>
 
       {/* Survey Dialog */}
       <Dialog open={showSurveyDialog} onOpenChange={setShowSurveyDialog}>
-        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-sm rounded-[2rem] p-0 overflow-hidden">
-          <div className="p-6 pb-0">
-            <DialogHeader>
-              <DialogTitle className="text-xl font-bold truncate max-w-[280px]">
+        <DialogContent className="!flex !flex-col !gap-0 w-[92vw] max-w-[420px] max-h-[86dvh] bg-slate-900 border-white/10 text-white rounded-3xl p-0 overflow-hidden">
+          <div className="px-5 pt-5 pb-3 border-b border-white/10 shrink-0 pr-10">
+            <DialogHeader className="text-left">
+              <DialogTitle className="text-base sm:text-lg font-bold truncate">
                 {selectedClient?.business_name || selectedClient?.name}
               </DialogTitle>
-              <DialogDescription className="text-slate-400">
+              <DialogDescription className="text-xs text-slate-400">
                 Responde los pasos básicos de la visita
               </DialogDescription>
             </DialogHeader>
           </div>
           
-          <div className="p-6 space-y-4 pt-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3.5 custom-scrollbar">
             {/* GPS & Canal Section (Priority) */}
-            <div className="space-y-4 mb-2">
-              <div className="p-4 rounded-3xl bg-slate-800/40 border border-white/5 space-y-4">
-                {/* GPS Info */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 bg-cyan-500/10 rounded-lg">
-                      <MapPin size={14} className="text-cyan-400" />
-                    </div>
-                    <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ubicación PDV</Label>
+            <div className="p-3.5 rounded-2xl bg-slate-800/40 border border-white/5 space-y-3">
+              {/* GPS Info */}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-cyan-500/10 rounded-lg">
+                    <MapPin size={14} className="text-cyan-400" />
                   </div>
-                  {(selectedClient?.lat && selectedClient?.lng && Number(selectedClient.lat) !== 0) ? (
-                    <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex items-center gap-1">
-                      <CheckCircle2 size={10} /> CAPTURADA
-                    </span>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                       <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 animate-pulse">
-                        PENDIENTE
-                      </span>
-                      <Button 
-                        size="xs" 
-                        onClick={() => setShowMapPicker(true)}
-                        className="h-7 px-2 text-[9px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-1 shadow-lg shadow-emerald-900/40"
-                      >
-                        <MapIcon size={10} /> MAPA
-                      </Button>
-                      <Button 
-                        size="xs" 
-                        onClick={() => handleOpenSurvey(selectedClient)}
-                        className="h-7 px-2 text-[9px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl flex items-center gap-1 border border-white/5"
-                      >
-                        <Crosshair size={10} /> GPS
-                      </Button>
-                    </div>
-                  )}
+                  <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ubicación PDV</Label>
                 </div>
+                {(selectedClient?.lat && selectedClient?.lng && Number(selectedClient.lat) !== 0) ? (
+                  <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex items-center gap-1">
+                    <CheckCircle2 size={10} /> CAPTURADA
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 animate-pulse">
+                      PENDIENTE
+                    </span>
+                    <Button 
+                      size="xs" 
+                      onClick={() => setShowMapPicker(true)}
+                      className="h-7 px-2 text-[9px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-1 shadow-lg shadow-emerald-900/40"
+                    >
+                      <MapIcon size={10} /> MAPA
+                    </Button>
+                    <Button 
+                      size="xs" 
+                      onClick={() => handleOpenSurvey(selectedClient)}
+                      className="h-7 px-2 text-[9px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl flex items-center gap-1 border border-white/5"
+                    >
+                      <Crosshair size={10} /> GPS
+                    </Button>
+                  </div>
+                )}
               </div>
 
               <LocationPickerModal
@@ -956,54 +954,53 @@ export default function SupervisorOnboardSupervision() {
                 }}
               />
 
-                {/* Vertical Client Type Selector */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 bg-purple-500/10 rounded-lg">
-                      <Target size={14} className="text-purple-400" />
-                    </div>
-                    <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Clasificación de Canal</Label>
+              {/* Vertical Client Type Selector */}
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-purple-500/10 rounded-lg">
+                    <Target size={14} className="text-purple-400" />
                   </div>
-
-                  <Select 
-                    value={surveyForm.client_type} 
-                    onValueChange={(v) => {
-                      const prevType = surveyForm.client_type;
-                      setSurveyForm(p => ({ ...p, client_type: v }));
-                      if (prevType !== v) {
-                        setCurrentCoolerEvalId(null);
-                      }
-                      // Instant update to repo as requested
-                      updateClient(selectedClient.id, { client_type: v });
-                      setRouteClients(prev => prev.map(c => 
-                        c.id === selectedClient.id ? { ...c, client_type: v } : c
-                      ));
-                    }}
-                  >
-                    <SelectTrigger className={`h-12 bg-slate-900/50 border-white/10 rounded-2xl text-xs font-bold ring-0 focus:ring-0 transition-all ${!surveyForm.client_type ? 'border-rose-500/50 ring-1 ring-rose-500/20 bg-rose-500/5' : ''}`}>
-                      <SelectValue placeholder="Selecciona el tipo de negocio" />
-                    </SelectTrigger>
-                    <SelectContent 
-                      position="popper" 
-                      sideOffset={5}
-                      className="z-[10001] bg-slate-900 border-white/10 text-white max-h-[250px] w-[var(--radix-select-trigger-width)]"
-                    >
-                      <div className="p-1 space-y-1">
-                        <SelectItem value="punto de venta" className="rounded-lg focus:bg-purple-500/10 focus:text-purple-400 font-medium">🛒 Punto de Venta</SelectItem>
-                        <SelectItem value="centro de consumo" className="rounded-lg focus:bg-purple-500/10 focus:text-purple-400 font-medium">🏮 Centro de Consumo</SelectItem>
-                        <SelectItem value="oxxo" className="rounded-lg focus:bg-amber-500/10 focus:text-amber-400 font-medium">🏪 OXXO</SelectItem>
-                        <SelectItem value="canal moderno" className="rounded-lg focus:bg-purple-500/10 focus:text-purple-400 font-medium">🏢 Canal Moderno</SelectItem>
-                      </div>
-                    </SelectContent>
-                  </Select>
-
-                  {!surveyForm.client_type && (
-                    <p className="text-[9px] text-rose-400 font-bold animate-pulse flex items-center gap-1 mt-1 justify-center bg-rose-500/10 p-2 rounded-xl">
-                      <AlertTriangle size={10} /> CLASIFICACIÓN OBLIGATORIA
-                    </p>
-                  )}
+                  <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Clasificación de Canal</Label>
                 </div>
+
+                <Select 
+                  value={surveyForm.client_type} 
+                  onValueChange={(v) => {
+                    const prevType = surveyForm.client_type;
+                    setSurveyForm(p => ({ ...p, client_type: v }));
+                    if (prevType !== v) {
+                      setCurrentCoolerEvalId(null);
+                    }
+                    updateClient(selectedClient.id, { client_type: v });
+                    setRouteClients(prev => prev.map(c => 
+                      c.id === selectedClient.id ? { ...c, client_type: v } : c
+                    ));
+                  }}
+                >
+                  <SelectTrigger className={`h-11 bg-slate-900/70 border-white/10 rounded-xl text-xs font-bold ring-0 focus:ring-0 transition-all ${!surveyForm.client_type ? 'border-rose-500/50 ring-1 ring-rose-500/20 bg-rose-500/5' : ''}`}>
+                    <SelectValue placeholder="Selecciona el tipo de negocio" />
+                  </SelectTrigger>
+                  <SelectContent 
+                    position="popper" 
+                    sideOffset={5}
+                    className="z-[10001] bg-slate-900 border-white/10 text-white max-h-[250px] w-[var(--radix-select-trigger-width)]"
+                  >
+                    <div className="p-1 space-y-1">
+                      <SelectItem value="punto de venta" className="rounded-lg focus:bg-purple-500/10 focus:text-purple-400 font-medium">🛒 Punto de Venta</SelectItem>
+                      <SelectItem value="centro de consumo" className="rounded-lg focus:bg-purple-500/10 focus:text-purple-400 font-medium">🏮 Centro de Consumo</SelectItem>
+                      <SelectItem value="oxxo" className="rounded-lg focus:bg-amber-500/10 focus:text-amber-400 font-medium">🏪 OXXO</SelectItem>
+                      <SelectItem value="canal moderno" className="rounded-lg focus:bg-purple-500/10 focus:text-purple-400 font-medium">🏢 Canal Moderno</SelectItem>
+                    </div>
+                  </SelectContent>
+                </Select>
+
+                {!surveyForm.client_type && (
+                  <p className="text-[9px] text-rose-400 font-bold animate-pulse flex items-center gap-1 mt-1 justify-center bg-rose-500/10 p-2 rounded-xl">
+                    <AlertTriangle size={10} /> CLASIFICACIÓN OBLIGATORIA
+                  </p>
+                )}
               </div>
+            </div>
 
               <div className="space-y-3">
                 {[
@@ -1194,9 +1191,9 @@ export default function SupervisorOnboardSupervision() {
               </div>
             </div>
 
-            <div className="p-6 bg-slate-800/50 backdrop-blur-md">
+            <div className="p-4 bg-slate-950/90 border-t border-white/10 shrink-0">
               <Button 
-                className={`w-full h-14 font-bold rounded-2xl shadow-lg gap-2 transition-all ${!surveyForm.client_type ? 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/40'}`}
+                className={`w-full h-12 sm:h-13 font-bold rounded-2xl shadow-lg gap-2 transition-all ${!surveyForm.client_type ? 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/40'}`}
                 onClick={handleSaveVisit}
                 disabled={loading || !surveyForm.client_type}
               >
@@ -1214,7 +1211,7 @@ export default function SupervisorOnboardSupervision() {
                 )}
               </Button>
               {!surveyForm.client_type && (
-                <p className="text-center text-[10px] text-rose-400 font-bold mt-3 uppercase tracking-tighter">
+                <p className="text-center text-[10px] text-rose-400 font-bold mt-2 uppercase tracking-tighter">
                   Falta Clasificación de Canal
                 </p>
               )}
@@ -1224,7 +1221,7 @@ export default function SupervisorOnboardSupervision() {
 
       {/* Cooler / OXXO / Canal Moderno Survey Full Modal */}
       <Dialog open={showCoolerSurvey} onOpenChange={setShowCoolerSurvey}>
-        <DialogContent className="p-0 m-0 w-full h-[100dvh] max-w-none bg-slate-100 dark:bg-slate-900 border-none rounded-none overflow-hidden flex flex-col">
+        <DialogContent className="!fixed !inset-0 !left-0 !top-0 !translate-x-0 !translate-y-0 !w-screen !h-[100dvh] !max-w-none !rounded-none !p-0 !m-0 !gap-0 bg-slate-100 dark:bg-slate-900 border-none overflow-hidden !flex !flex-col">
           <div className="flex-1 overflow-y-auto">
             {surveyForm.client_type === 'oxxo' ? (
               <CanalModernoPage
@@ -1297,7 +1294,7 @@ export default function SupervisorOnboardSupervision() {
 
       {/* Global Search Dialog */}
       <Dialog open={showGlobalSearch} onOpenChange={setShowGlobalSearch}>
-        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-sm rounded-[2rem] p-6 overflow-hidden">
+        <DialogContent className="w-[92vw] max-w-[400px] bg-slate-900 border-white/10 text-white rounded-3xl p-5 overflow-hidden">
           <DialogHeader>
             <DialogTitle>Agregar Cliente Extra</DialogTitle>
             <DialogDescription className="text-slate-400">

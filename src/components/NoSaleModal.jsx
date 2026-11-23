@@ -9,6 +9,7 @@ import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import { Loader2, Camera, MapPin, XCircle } from 'lucide-react';
 import { getCurrentPositionSafe } from '@/lib/geolocation';
+import { DirectCameraField } from '@/components/common/DirectCameraModal';
 
 const NO_SALE_REASONS = [
     "Cerrado",
@@ -128,15 +129,12 @@ const NoSaleModal = ({ isOpen, onClose, client, onSuccess }) => {
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label className="text-slate-200">Foto de fachada (obligatoria)</Label>
-                        <Input
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={event => setPhotoFachada(event.target.files?.[0] || null)}
-                            className="bg-slate-800 border-slate-700 text-slate-100 file:text-slate-100"
+                        <DirectCameraField
+                            label="Foto de fachada (obligatoria)"
+                            required
+                            file={photoFachada}
+                            onCapture={(file) => setPhotoFachada(file)}
                         />
-                        {photoFachada && <p className="text-xs text-emerald-400">Foto lista: {photoFachada.name}</p>}
                     </div>
                 </div>
 

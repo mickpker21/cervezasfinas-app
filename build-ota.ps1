@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 # build-ota.ps1 - Genera el ZIP de actualización OTA OPTIMIZADO
 # Solo incluye el código compilado (assets JS/CSS + index.html)
 # EXCLUYE: portafolio/, models/, imágenes estáticas pesadas
@@ -47,11 +47,39 @@ Copy-Item -Path "$root\dist\assets\*" -Destination "$tempZipDir\assets\" -Recurs
 Copy-Item -Path "$root\dist\index.html" -Destination "$tempZipDir\" -Force
 if (Test-Path "$root\dist\manifest.webmanifest") { Copy-Item "$root\dist\manifest.webmanifest" "$tempZipDir\" -Force }
 if (Test-Path "$root\dist\service-worker.js") { Copy-Item "$root\dist\service-worker.js" "$tempZipDir\" -Force }
+# Include the root logos referenced directly by index.html and shared UI.
+foreach ($logoName in @("logo.png", "logo6.png", "login-avatar.jpg")) {
+    $logoPath = Join-Path "$root\dist" $logoName
+    if (Test-Path -LiteralPath $logoPath -PathType Leaf) {
+        Copy-Item -LiteralPath $logoPath -Destination "$tempZipDir\" -Force
+    }
+}
 
 # Crear el zip
 Write-Host "`n   Comprimiendo..." -ForegroundColor Yellow
 if (Test-Path $otaZipPath) { Remove-Item -Force $otaZipPath }
-Compress-Archive -Path "$tempZipDir\*" -DestinationPath $otaZipPath -Force
+# Create the ZIP with portable "/" separators. Compress-Archive writes Windows
+# "\" separators into entry names; Capgo rejects those paths on Android.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::Open(
+    $otaZipPath,
+    [System.IO.Compression.ZipArchiveMode]::Create
+)
+try {
+    $stagingRoot = (Resolve-Path $tempZipDir).Path.TrimEnd('\') + '\'
+    Get-ChildItem -LiteralPath $tempZipDir -File -Recurse | ForEach-Object {
+        $entryName = $_.FullName.Substring($stagingRoot.Length).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zipArchive,
+            $_.FullName,
+            $entryName,
+            [System.IO.Compression.CompressionLevel]::Optimal
+        ) | Out-Null
+    }
+} finally {
+    $zipArchive.Dispose()
+}
 
 # Limpiar temporal
 Remove-Item -Recurse -Force $tempZipDir

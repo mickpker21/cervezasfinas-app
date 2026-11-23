@@ -13,6 +13,7 @@ import { useSupabaseAuth } from "@/contexts/SupabaseAuthContext";
 import { useToast } from "@/components/ui/use-toast";
 import { loadEvaluationConfig, defaultEvaluationConfig, onEvaluationConfigUpdated, subscribeEvaluationConfig } from "@/lib/evaluationConfig";
 import { getClientsPaged } from "@/repositories/clientsRepository";
+import { DirectCameraField } from "@/components/common/DirectCameraModal";
 import { Building2, Search, CheckCircle2, AlertTriangle } from "lucide-react";
 
 /* ===== UI helpers ===== */
@@ -708,50 +709,27 @@ export default function CanalModernoPage({ embeddedClient = null, hideRedirect =
       </div>
 
       <Card className="mb-4">
-        <CardHeader><CardTitle>Fotos de evidencia (toma 3)</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Fotos de evidencia en vivo (toma 3)</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid gap-4">
-            {/* Foto 1 */}
-            <div className="grid gap-2">
-              <Label>Foto 1 — Fachada / Frontal</Label>
-              <Input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(e) => setPhotoFachada(e.target.files?.[0] || null)}
-              />
-              {photoFachada && (
-                <img src={URL.createObjectURL(photoFachada)} alt="Fachada" className="h-28 w-28 object-cover rounded-md border" />
-              )}
-            </div>
-
-            {/* Foto 2 */}
-            <div className="grid gap-2">
-              <Label>Foto 2 — Destino / Anaquel</Label>
-              <Input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(e) => setPhotoDestino(e.target.files?.[0] || null)}
-              />
-              {photoDestino && (
-                <img src={URL.createObjectURL(photoDestino)} alt="Destino" className="h-28 w-28 object-cover rounded-md border" />
-              )}
-            </div>
-
-            {/* Foto 3 */}
-            <div className="grid gap-2">
-              <Label>Foto 3 — Impulso / Exhibición</Label>
-              <Input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(e) => setPhotoImpulso(e.target.files?.[0] || null)}
-              />
-              {photoImpulso && (
-                <img src={URL.createObjectURL(photoImpulso)} alt="Impulso" className="h-28 w-28 object-cover rounded-md border" />
-              )}
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <DirectCameraField
+              label="Foto 1 — Fachada / Frontal"
+              required
+              file={photoFachada}
+              onCapture={(file) => setPhotoFachada(file)}
+            />
+            <DirectCameraField
+              label="Foto 2 — Destino / Anaquel"
+              required
+              file={photoDestino}
+              onCapture={(file) => setPhotoDestino(file)}
+            />
+            <DirectCameraField
+              label="Foto 3 — Impulso / Exhibición"
+              required
+              file={photoImpulso}
+              onCapture={(file) => setPhotoImpulso(file)}
+            />
           </div>
         </CardContent>
       </Card>

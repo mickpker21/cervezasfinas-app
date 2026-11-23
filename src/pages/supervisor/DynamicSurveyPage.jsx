@@ -18,6 +18,7 @@ import { supabase } from '@/supabaseClient';
 import SignatureCanvas from 'react-signature-canvas';
 import { Geolocation } from '@capacitor/geolocation';
 import { uploadPhoto } from '@/lib/uploadService';
+import { DirectCameraModal } from '@/components/common/DirectCameraModal';
 
 export default function DynamicSurveyPage() {
   const { clientId, templateId } = useParams();
@@ -35,6 +36,7 @@ export default function DynamicSurveyPage() {
   const [responses, setResponses] = useState({});
   const [gpsLocation, setGpsLocation] = useState(null);
   const [photos, setPhotos] = useState({});
+  const [activeCameraFieldId, setActiveCameraFieldId] = useState(null);
   
   // Refs
   const signatureRef = useRef(null);
@@ -256,27 +258,27 @@ export default function DynamicSurveyPage() {
                   {field.type === 'photo' && (
                     <div>
                       {photos[field.id] ? (
-                        <div className="relative inline-block mt-2">
-                          <img src={photos[field.id]} alt="Evidencia" className="w-32 h-32 object-cover rounded-xl border border-slate-700" />
+                        <div className="relative inline-block mt-2" onClick={() => setActiveCameraFieldId(field.id)}>
+                          <img src={photos[field.id]} alt="Evidencia" className="w-32 h-32 object-cover rounded-xl border border-slate-700 cursor-pointer" />
                           <div className="absolute -top-2 -right-2 bg-emerald-500 rounded-full p-1">
                             <CheckCircle2 className="w-4 h-4 text-white" />
                           </div>
                         </div>
                       ) : (
                         <div className="mt-2 flex items-center gap-4">
-                          <Button variant="outline" className="border-slate-700 bg-slate-800/50 text-slate-300" onClick={() => fileInputRefs.current[field.id]?.click()}>
-                            <Camera className="w-4 h-4 mr-2" /> Capturar Foto
+                          <Button type="button" variant="outline" className="border-slate-700 bg-slate-800/50 text-slate-300" onClick={() => setActiveCameraFieldId(field.id)}>
+                            <Camera className="w-4 h-4 mr-2" /> Abrir Cámara
                           </Button>
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            capture="environment" 
-                            className="hidden"
-                            ref={el => fileInputRefs.current[field.id] = el}
-                            onChange={(e) => handlePhotoUpload(field.id, e)}
-                          />
                         </div>
                       )}
+                      <DirectCameraModal
+                        open={activeCameraFieldId === field.id}
+                        onClose={() => setActiveCameraFieldId(null)}
+                        title={field.label || 'Tomar Foto'}
+                        onCapture={(file) => {
+                          if (file) handlePhotoUpload(field.id, { target: { files: [file] } });
+                        }}
+                      />
                     </div>
                   )}
 

@@ -5,6 +5,7 @@ import { useSupabaseAuth } from "@/contexts/SupabaseAuthContext";
 import { Camera, MapPin, StickyNote, Sparkles } from "lucide-react";
 import { getOptionalPositionFast } from "@/lib/geolocation";
 import { getTodayMexico, getNowMexico, getMexicoDateTime } from "@/lib/dateUtils";
+import { DirectCameraModal } from "@/components/common/DirectCameraModal";
 
 const NOTE_PRESETS = [
   "Cliente sin inventario frío.",
@@ -402,7 +403,7 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
 }
 
 function MediaDropzone({ id, label, helper, file, onChange, required = false, hasError = false, errorMessage = "" }) {
-  const inputId = id || `media-${label.toLowerCase().replace(/\s+/g, "-")}`;
+  const [cameraOpen, setCameraOpen] = useState(false);
   const previewUrl = useMemo(() => {
     if (!file) return null;
     if (typeof file === "string") return file;
@@ -445,30 +446,21 @@ function MediaDropzone({ id, label, helper, file, onChange, required = false, ha
         </p>
       )}
 
-      <input
-        id={inputId}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-        className="hidden"
-      />
-
       {previewUrl ? (
         <div className="mt-3 relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 h-32 group">
           <img src={previewUrl} alt={label} className="w-full h-full object-cover" />
           <button
             type="button"
-            onClick={() => document.getElementById(inputId)?.click()}
+            onClick={() => setCameraOpen(true)}
             className="absolute inset-0 bg-black/50 text-white text-xs font-medium flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity gap-1.5"
           >
-            <Camera className="h-4 w-4" /> Cambiar foto
+            <Camera className="h-4 w-4" /> Tomar de nuevo
           </button>
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => document.getElementById(inputId)?.click()}
+          onClick={() => setCameraOpen(true)}
           className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-8 text-sm font-medium transition ${
             hasError
               ? "border-red-400 bg-red-50 text-red-600 hover:border-red-500"
@@ -476,9 +468,16 @@ function MediaDropzone({ id, label, helper, file, onChange, required = false, ha
           }`}
         >
           <Camera className="h-5 w-5" />
-          <span>Tomar o subir foto de {label.toLowerCase()}</span>
+          <span>Abrir cámara ({label.toLowerCase()})</span>
         </button>
       )}
+
+      <DirectCameraModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        title={`Tomar foto de ${label}`}
+        onCapture={(capturedFile) => onChange(capturedFile)}
+      />
     </div>
   );
 }

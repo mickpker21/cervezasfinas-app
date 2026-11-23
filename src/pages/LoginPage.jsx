@@ -25,6 +25,7 @@ import { Capacitor } from "@capacitor/core";
 import { kvStorage } from "@/services/kvStorage";
 import { supabase } from "@/supabaseClient";
 import { APP_CURRENT_VERSION } from "@/services/updateService";
+import loginAvatar from "@/assets/login-avatar.jpg";
 
 export default function LoginPage() {
   const { signIn, session, loading, resetPassword, verifyOtpRecovery } = useSupabaseAuth();
@@ -335,37 +336,19 @@ export default function LoginPage() {
 
           {/* ── MAIN BODY: LEFT FORM/SELECTOR + RIGHT FLUID WAVE HERO ── */}
           <div className="relative z-20 flex-1 grid grid-cols-1 lg:grid-cols-12 items-center px-6 sm:px-10 py-6 gap-8">
-            {/* LEFT COLUMN: AVATAR + PROFILE SELECTOR OR LOGIN FORM (5 cols on lg) */}
+            {/* LEFT COLUMN: PROFILE SELECTOR OR (AVATAR + LOGIN FORM) (5 cols on lg) */}
             <div className="lg:col-span-5 flex flex-col items-center w-full max-w-[350px] mx-auto">
-              {/* Glowing Double-Ring Heineken Collaborator Avatar */}
-              <div className="relative mb-6 flex items-center justify-center">
-                <div
-                  className="w-28 h-28 rounded-full p-1.5 flex items-center justify-center border-2 border-[#00e676]/85 bg-[#061526]"
-                  style={{
-                    boxShadow:
-                      "0 0 28px rgba(0, 230, 118, 0.35), inset 0 0 18px rgba(0, 230, 118, 0.2)",
-                  }}
-                >
-                  <img
-                    src="/login-avatar.jpg"
-                    alt="Colaborador Cervezas Finas"
-                    className="w-full h-full rounded-full object-cover border border-[#00e676]/40"
-                    draggable={false}
-                  />
-                </div>
-              </div>
-
               {!showLogin && !Capacitor.isNativePlatform() ? (
-                /* ── STEP 1: CLIENT vs STAFF PROFILE SELECTION ── */
-                <div className="w-full space-y-3.5 text-center">
-                  <div className="mb-1">
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#00e676] mb-0.5">
+                /* ── STEP 1: CLIENT vs STAFF PROFILE SELECTION (Without Collaborator Avatar) ── */
+                <div className="w-full space-y-4 text-center py-4">
+                  <div className="mb-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#00e676] mb-1">
                       Portal de Acceso
                     </p>
-                    <h2 className="text-xl font-black text-white uppercase tracking-tight">
+                    <h2 className="text-2xl font-black text-white uppercase tracking-tight">
                       Selecciona tu perfil
                     </h2>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-400 mt-1">
                       ¿Eres cliente o personal de Cervezas Finas?
                     </p>
                   </div>
@@ -376,7 +359,7 @@ export default function LoginPage() {
                     onClick={() => {
                       window.location.href = "https://cervezasfinas.com.mx";
                     }}
-                    className="w-full py-3.5 px-5 rounded-full bg-[#09192e] hover:bg-[#0d223d] border border-emerald-500/35 hover:border-[#00ff88] text-white flex items-center justify-between transition-all group shadow-lg"
+                    className="w-full py-4 px-5 rounded-full bg-[#09192e] hover:bg-[#0d223d] border border-emerald-500/35 hover:border-[#00ff88] text-white flex items-center justify-between transition-all group shadow-lg"
                   >
                     <div className="flex items-center gap-3.5">
                       <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[#00ff88] group-hover:scale-105 transition-transform">
@@ -401,7 +384,7 @@ export default function LoginPage() {
                       setErrorMsg("");
                       setShowLogin(true);
                     }}
-                    className="w-full py-3.5 px-5 rounded-full bg-gradient-to-r from-[#00ff88] via-[#00cc4a] to-[#009938] text-[#03140a] flex items-center justify-between transition-all group shadow-[0_8px_25px_rgba(0,204,74,0.35)] hover:brightness-110 active:scale-[0.99]"
+                    className="w-full py-4 px-5 rounded-full bg-gradient-to-r from-[#00ff88] via-[#00cc4a] to-[#009938] text-[#03140a] flex items-center justify-between transition-all group shadow-[0_8px_25px_rgba(0,204,74,0.35)] hover:brightness-110 active:scale-[0.99]"
                   >
                     <div className="flex items-center gap-3.5">
                       <div className="w-10 h-10 rounded-full bg-[#03140a]/15 flex items-center justify-center text-[#03140a] group-hover:scale-105 transition-transform">
@@ -420,8 +403,25 @@ export default function LoginPage() {
                   </button>
                 </div>
               ) : (
-                /* ── STEP 2: STAFF LOGIN / OTP FORM ── */
-                <div className="w-full">
+                /* ── STEP 2: STAFF LOGIN / OTP FORM (With Collaborator Avatar) ── */
+                <div className="w-full flex flex-col items-center">
+                  {/* Glowing Double-Ring Heineken Collaborator Avatar */}
+                  <div className="relative mb-6 flex items-center justify-center">
+                    <div
+                      className="w-28 h-28 rounded-full p-1.5 flex items-center justify-center border-2 border-[#00e676]/85 bg-[#061526]"
+                      style={{
+                        boxShadow:
+                          "0 0 28px rgba(0, 230, 118, 0.35), inset 0 0 18px rgba(0, 230, 118, 0.2)",
+                      }}
+                    >
+                      <img
+                        src={loginAvatar}
+                        alt="Colaborador Cervezas Finas"
+                        className="w-full h-full rounded-full object-cover border border-[#00e676]/40"
+                        draggable={false}
+                      />
+                    </div>
+                  </div>
                   {errorMsg && (
                     <div className="w-full mb-4 bg-red-500/10 border border-red-500/40 text-red-300 px-4 py-2.5 rounded-2xl text-xs font-semibold text-center">
                       {errorMsg}

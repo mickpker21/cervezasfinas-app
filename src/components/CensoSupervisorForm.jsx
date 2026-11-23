@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import SmartBarcodeScanner from '@/components/SmartBarcodeScanner';
+import { DirectCameraModal } from '@/components/common/DirectCameraModal';
 
 const COOLER_MODELS = ['CCV144', 'CCV192', 'CCV320', 'CCV376', 'CCV500', 'CCV900', 'CCV1350', 'Z11', 'BAJOBARRA'];
 const POSITIONS = ['PP', 'PPA', 'OTRA POSICION'];
@@ -24,12 +25,12 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 }
 
 function PhotoCapture({ label, value, onChange }) {
-  const fileRef = useRef();
+  const [cameraOpen, setCameraOpen] = useState(false);
   return (
     <div className="space-y-2">
       <label className="text-xs font-medium text-slate-300 uppercase tracking-wide">{label}</label>
       <div
-        onClick={() => fileRef.current?.click()}
+        onClick={() => setCameraOpen(true)}
         className={cn(
           'relative cursor-pointer rounded-xl border-2 border-dashed transition-all h-36 flex flex-col items-center justify-center gap-2 overflow-hidden',
           value ? 'border-emerald-500/40' : 'border-slate-700 hover:border-slate-500'
@@ -45,24 +46,21 @@ function PhotoCapture({ label, value, onChange }) {
         ) : (
           <>
             <Camera className="w-8 h-8 text-slate-500" />
-            <span className="text-xs text-slate-500">Toca para tomar foto</span>
+            <span className="text-xs text-slate-500">Toca para abrir cámara y tomar foto</span>
           </>
         )}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={async e => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = ev => onChange(ev.target.result);
-            reader.readAsDataURL(file);
-          }}
-        />
       </div>
+      <DirectCameraModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        title={label || 'Tomar Foto'}
+        onCapture={(file) => {
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (ev) => onChange(ev.target.result);
+          reader.readAsDataURL(file);
+        }}
+      />
     </div>
   );
 }
