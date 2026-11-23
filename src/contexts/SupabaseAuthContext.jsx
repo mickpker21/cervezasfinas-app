@@ -88,20 +88,52 @@ export const SupabaseAuthProvider = ({ children }) => {
             }
 
             // Sesión válida online -> Actualizamos todo
+            localStorage.removeItem('cf_explicit_logout');
+            kvStorage.removeItem('cf_explicit_logout').catch(() => { });
             setSession(currentSession);
             setUser(currentSession.user ?? null);
             setOfflineSession(false);
             // Guardamos persistencia manual
             kvStorage.setItem(STORAGE_KEY, currentSession).catch(() => { });
           } else {
-            // ðŸ§  SESSION NULL (o error de refresh):
-            // NO borrar inmediatamente la sesión local. Puede ser un fallo de red "falso positivo"
-            // o un problema temporal de Supabase.
-            // Intentamos recuperar la sesión local como fallback ("Offline Mode" forzado)
+            const wasExplicitLogout =
+              localStorage.getItem('cf_explicit_logout') === '1' ||
+              (await kvStorage.getItem('cf_explicit_logout').catch(() => null)) === '1';
 
-            console.warn('[Auth] getSession retornó null/error estando online. Intentando fallback local...', error);
+            // Si el usuario cerró sesión explícitamente o getSession() respondió sin error que no hay sesión activa online,
+            // NO revivir la sesión automáticamente.
+            if (wasExplicitLogout || !error) {
+              setSession(null);
+              setUser(null);
+              setOfflineSession(false);
+              await kvStorage.removeItem(STORAGE_KEY).catch(() => { });
+              await kvStorage.removeItem('last_known_user').catch(() => { });
+            } else {
+              console.warn('[Auth] Error de red en getSession. Intentando fallback local...', error);
+              let cachedSession = null;
+              try {
+                cachedSession = await kvStorage.getItem(STORAGE_KEY);
+              } catch (e) { }
 
-            let cachedSession = null;
+              if (cachedSession) {
+                setSession(cachedSession);
+                setUser(cachedSession.user ?? null);
+                setOfflineSession(true);
+              } else {
+                setSession(null);
+                setUser(null);
+                setOfflineSession(false);
+              }
+            }
+          }
+        } else {
+          // 📴 OFFLINE: intentamos kvStorage solo si NO hubo cierre de sesión explícito
+          const wasExplicitLogout =
+            localStorage.getItem('cf_explicit_logout') === '1' ||
+            (await kvStorage.getItem('cf_explicit_logout').catch(() => null)) === '1';
+
+          let cachedSession = null;
+          if (!wasExplicitLogout) {
             try {
               cachedSession = await kvStorage.getItem(STORAGE_KEY);
             } catch (e) { }
@@ -114,36 +146,6 @@ export const SupabaseAuthProvider = ({ children }) => {
                 }
               } catch (e) { }
             }
-
-            if (cachedSession) {
-              setSession(cachedSession);
-              setUser(cachedSession.user ?? null);
-              setOfflineSession(true); // Tratamos como offline para que la UI no bloquee
-              console.log('[Auth] Fallback a sesión local exitoso (Preservando credenciales)');
-            } else {
-              // Si no hay nada local, entonces sí estamos deslogueados
-              setSession(null);
-              setUser(null);
-              setOfflineSession(false);
-              // Solo aquí borramos, aunque ya estaba vacío
-            }
-          }
-        } else {
-          // 📴 OFFLINE: intentamos kvStorage
-          let cachedSession = null;
-          try {
-            cachedSession = await kvStorage.getItem(STORAGE_KEY);
-          } catch (e) { }
-
-          // Respaldo de emergencia si la clave de sesión fue vaciada
-          if (!cachedSession) {
-            try {
-              const lastUser = await kvStorage.getItem('last_known_user');
-              if (lastUser) {
-                cachedSession = { user: lastUser, access_token: 'offline_token' };
-                console.log('[Auth] Recuperado last_known_user como respaldo de emergencia offline');
-              }
-            } catch (e) { }
           }
 
           if (cachedSession) {
@@ -191,10 +193,13 @@ export const SupabaseAuthProvider = ({ children }) => {
 
             // Solo si estamos ONLINE y el evento fue SIGNED_OUT explícito:
             console.log('[Auth] Cierre de sesión confirmado online.');
+            localStorage.setItem('cf_explicit_logout', '1');
+            kvStorage.setItem('cf_explicit_logout', '1').catch(() => { });
             setSession(null);
             setUser(null);
             setOfflineSession(false);
             kvStorage.removeItem(STORAGE_KEY).catch(() => { });
+            kvStorage.removeItem('last_known_user').catch(() => { });
             return;
           }
           
@@ -406,6 +411,8 @@ export const SupabaseAuthProvider = ({ children }) => {
 
       console.log('[Auth] ✅ Inicio de sesión OFFLINE exitoso para:', normEmail);
       const validSession = matchedSession || { user: matchedUser, access_token: 'offline_token' };
+      localStorage.removeItem('cf_explicit_logout');
+      kvStorage.removeItem('cf_explicit_logout').catch(() => {});
       setSession(validSession);
       setUser(matchedUser);
       setOfflineSession(true);
@@ -469,6 +476,8 @@ export const SupabaseAuthProvider = ({ children }) => {
           data.session.user = newUser;
         }
 
+        localStorage.removeItem('cf_explicit_logout');
+        kvStorage.removeItem('cf_explicit_logout').catch(() => {});
         setSession(data.session);
         setUser(newUser);
         setOfflineSession(false);
@@ -550,15 +559,27 @@ export const SupabaseAuthProvider = ({ children }) => {
 
   const signOut = useCallback(async () => {
     try {
+      localStorage.setItem('cf_explicit_logout', '1');
       setUser(null);
       setSession(null);
       setOfflineSession(false);
       try {
-        await kvStorage.removeItem(STORAGE_KEY);
+        await Promise.all([
+          kvStorage.setItem('cf_explicit_logout', '1'),
+          kvStorage.removeItem(STORAGE_KEY),
+          kvStorage.removeItem('last_known_user'),
+          kvStorage.removeItem('last_known_route'),
+        ]);
       } catch (e) {
         console.error('Error clearing kvStorage:', e);
       }
-      localStorage.removeItem('sb-wzcntpzxxxx-auth-token');
+      try {
+        Object.keys(localStorage).forEach((k) => {
+          if (k.startsWith('sb-') || k === STORAGE_KEY || k === 'last_known_user') {
+            localStorage.removeItem(k);
+          }
+        });
+      } catch (e) {}
       const { error } = await supabase.auth.signOut();
       return { error };
     } catch (error) {
