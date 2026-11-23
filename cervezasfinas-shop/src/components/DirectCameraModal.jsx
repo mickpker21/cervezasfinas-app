@@ -5,6 +5,7 @@ export default function DirectCameraModal({ isOpen, onClose, onCapture, title = 
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const streamRef = useRef(null);
+    const nativeCameraInputRef = useRef(null);
 
     const [facingMode, setFacingMode] = useState('environment');
     const [starting, setStarting] = useState(false);
@@ -140,6 +141,18 @@ export default function DirectCameraModal({ isOpen, onClose, onCapture, title = 
         setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
     };
 
+    const handleNativeCameraFallback = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            stopStream();
+            onCapture(file, reader.result);
+            onClose();
+        };
+        reader.readAsDataURL(file);
+    };
+
     return (
         <div className="fixed inset-0 z-[100] bg-black flex flex-col">
             {/* Barra superior */}
@@ -176,13 +189,31 @@ export default function DirectCameraModal({ isOpen, onClose, onCapture, title = 
                     <div className="max-w-sm mx-auto p-6 text-center text-white space-y-4">
                         <AlertCircle className="w-12 h-12 text-amber-400 mx-auto" />
                         <p className="text-sm font-medium text-gray-200">{errorMsg}</p>
-                        <button
-                            type="button"
-                            onClick={() => startCamera(facingMode)}
-                            className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm"
-                        >
-                            Reintentar Cámara
-                        </button>
+                        <div className="flex flex-col gap-2.5">
+                            <button
+                                type="button"
+                                onClick={() => nativeCameraInputRef.current?.click()}
+                                className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg"
+                            >
+                                <Camera className="w-4 h-4" />
+                                <span>Abrir Cámara del Teléfono</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => startCamera(facingMode)}
+                                className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs"
+                            >
+                                Reintentar Cámara en Vivo
+                            </button>
+                        </div>
+                        <input
+                            ref={nativeCameraInputRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={handleNativeCameraFallback}
+                            className="hidden"
+                        />
                     </div>
                 ) : capturedDataUrl ? (
                     <img
