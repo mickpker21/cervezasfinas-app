@@ -1,7 +1,65 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../lib/api';
+import { api, API_URL } from '../lib/api';
 import { Loader2, Camera, CheckCircle, Image as ImageIcon, AlertCircle, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import DirectCameraModal from '../components/DirectCameraModal';
+
+function compressImage(file, maxWidth = 1280, quality = 0.8) {
+    return new Promise((resolve) => {
+        if (!file || !file.type.startsWith('image/')) {
+            resolve(file);
+            return;
+        }
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            let { width, height } = img;
+            if (width > maxWidth) {
+                height = Math.round((height * maxWidth) / width);
+                width = maxWidth;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            canvas.toBlob(
+                (blob) => {
+                    if (!blob) {
+                        resolve(file);
+                        return;
+                    }
+                    const compressedFile = new File(
+                        [blob],
+                        file.name.replace(/\.[^.]+$/, '.jpg'),
+                        { type: 'image/jpeg', lastModified: Date.now() }
+                    );
+                    resolve(compressedFile);
+                },
+                'image/jpeg',
+                quality
+            );
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            resolve(file);
+        };
+        img.src = objectUrl;
+    });
+}
+
+function resolveCoolerPhotoUrl(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') || rawUrl.startsWith('data:')) {
+        return rawUrl;
+    }
+    const clean = rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl;
+    if (clean.startsWith('/assets/cooler_refs/')) {
+        return 'https://cervezasfinas.com/api' + clean;
+    }
+    return 'https://cervezasfinas.com' + clean;
+}
 
 export default function CoolerExecution() {
     const navigate = useNavigate();
@@ -10,7 +68,9 @@ export default function CoolerExecution() {
     const [selectedFile, setSelectedFile] = useState(null);
     const [previewUrl, setPreviewUrl] = useState(null);
     const [uploading, setUploading] = useState(false);
+    const [compressing, setCompressing] = useState(false);
     const [success, setSuccess] = useState(false);
+    const [cameraOpen, setCameraOpen] = useState(false);
 
     useEffect(() => {
         loadReferencePhotos();
@@ -30,35 +90,40 @@ export default function CoolerExecution() {
         }
     }
 
-    function handleFileSelect(e) {
-        const file = e.target.files[0];
-        if (file) {
+    async function handleCameraCapture(file, dataUrl) {
+        if (!file) return;
+        setCompressing(true);
+        try {
+            const optimized = await compressImage(file, 1280, 0.8);
+            setSelectedFile(optimized);
+            if (dataUrl) {
+                setPreviewUrl(dataUrl);
+            } else {
+                const reader = new FileReader();
+                reader.onloadend = () => setPreviewUrl(reader.result);
+                reader.readAsDataURL(optimized);
+            }
+        } catch (error) {
+            console.error('Error compressing camera image:', error);
             setSelectedFile(file);
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setPreviewUrl(reader.result);
-            };
-            reader.readAsDataURL(file);
+            if (dataUrl) setPreviewUrl(dataUrl);
+        } finally {
+            setCompressing(false);
         }
     }
 
     async function handleSubmit() {
-        if (!selectedFile) {
-            alert('Por favor selecciona una foto');
-            return;
-        }
+        if (!selectedFile) return;
 
         setUploading(true);
         try {
-            // 1. Upload photo first
+            // 1. Upload photo file
             const formData = new FormData();
             formData.append('image', selectedFile);
+            formData.append('photo', selectedFile);
 
-            // Use raw fetch to handle FormData correctly (api.js forces JSON)
-            // We need to import API_URL if not available, or hardcode/construct it. 
-            // Better to rely on the same base URL structure.
             const token = localStorage.getItem('shop_token');
-            const uploadResRaw = await fetch('https://cervezasfinas.com/api/shop/cooler/upload.php', {
+            const uploadResRaw = await fetch(`${API_URL}/cooler/upload.php`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -79,9 +144,10 @@ export default function CoolerExecution() {
                 photo_url: photoUrl
             });
 
-            if (response.success) {
-                setSuccess(true);
+            if (!response.success) {
+                throw new Error(response.error || 'No se pudo registrar la foto para revisión');
             }
+            setSuccess(true);
         } catch (error) {
             alert('Error al subir la foto: ' + error.message);
         } finally {
@@ -91,17 +157,17 @@ export default function CoolerExecution() {
 
     if (success) {
         return (
-            <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
-                <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 text-center">
-                    <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
-                    <h1 className="text-2xl font-bold mb-2">¡Foto Enviada!</h1>
-                    <p className="text-gray-600 dark:text-gray-400 mb-6">
-                        Tu foto ha sido enviada correctamente. Televenta la revisará y te otorgará puntos según la calidad de la ejecución.
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center border border-gray-200">
+                    <CheckCircle className="w-16 h-16 text-emerald-600 mx-auto mb-4" />
+                    <h1 className="text-2xl font-black text-gray-900 mb-2">¡Foto de Enfriador Enviada!</h1>
+                    <p className="text-gray-600 mb-6 text-sm leading-relaxed">
+                        Tu foto ha sido enviada correctamente. El equipo de Televenta la revisará y te otorgará puntos según el acomodo y la calidad de la ejecución.
                     </p>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                         <button
                             onClick={() => navigate('/points')}
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors"
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl shadow-md transition-colors"
                         >
                             Ver Mis Puntos
                         </button>
@@ -111,7 +177,7 @@ export default function CoolerExecution() {
                                 setSelectedFile(null);
                                 setPreviewUrl(null);
                             }}
-                            className="w-full border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 font-semibold py-3 rounded-lg transition-colors"
+                            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 rounded-xl transition-colors border border-gray-200"
                         >
                             Subir Otra Foto
                         </button>
@@ -122,143 +188,180 @@ export default function CoolerExecution() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
-            <div className="container mx-auto px-4 max-w-4xl">
-                <button
-                    onClick={() => navigate('/catalog')}
-                    className="mb-4 flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-green-600 transition-colors font-medium"
-                >
-                    <ArrowLeft className="w-5 h-5" />
-                    Regresar al Catálogo
-                </button>
-                <h1 className="text-3xl font-bold mb-2">Ejecución de Enfriador</h1>
-                <p className="text-gray-600 dark:text-gray-400 mb-8">
-                    Sube una foto de tu enfriador ejecutado correctamente y gana puntos
-                </p>
+        <div className="min-h-screen bg-gray-50 py-6 sm:py-8 text-gray-900">
+            <div className="container mx-auto px-4 max-w-5xl">
+                {/* Header */}
+                <div className="flex items-center gap-4 mb-6">
+                    <button
+                        onClick={() => navigate('/catalog')}
+                        className="p-2.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 shadow-sm rounded-full transition-colors"
+                        title="Regresar al catálogo"
+                    >
+                        <ArrowLeft className="w-5 h-5 text-gray-800" />
+                    </button>
+                    <div>
+                        <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Ejecución de Enfriador</h1>
+                        <p className="text-xs text-gray-500 font-medium">Sube una foto de tu enfriador y gana puntos lealtad</p>
+                    </div>
+                </div>
 
-                <div className="grid lg:grid-cols-2 gap-8">
+                <div className="grid md:grid-cols-2 gap-5 sm:gap-6 lg:gap-8">
                     {/* Reference Photos */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                            <ImageIcon className="w-5 h-5" />
-                            Fotos de Referencia
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6">
+                        <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                            <ImageIcon className="w-5 h-5 text-emerald-600" />
+                            Fotos Guía de Referencia
                         </h2>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                            Revisa estas fotos de ejemplo para saber cómo debe verse una buena ejecución
+                        <p className="text-xs sm:text-sm text-gray-600 mb-4 leading-relaxed">
+                            Acomoda las cervezas en tu enfriador siguiendo este ejemplo oficial para asegurar tus puntos de bonificación.
                         </p>
 
                         {loading ? (
-                            <div className="flex justify-center py-8">
-                                <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+                            <div className="flex justify-center py-12">
+                                <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
                             </div>
                         ) : referencePhotos.length === 0 ? (
-                            <p className="text-center py-8 text-gray-500">
-                                No hay fotos de referencia disponibles
-                            </p>
+                            <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                                <ImageIcon className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                                <p className="text-gray-600 font-semibold text-sm">
+                                    No hay fotos de referencia disponibles
+                                </p>
+                            </div>
                         ) : (
-                            <div className="space-y-4 max-h-96 overflow-y-auto">
-                                {referencePhotos.map((photo) => (
-                                    <div key={photo.id} className="border dark:border-gray-700 rounded-lg overflow-hidden">
-                                        <img
-                                            src={photo.photo_url}
-                                            alt={photo.title}
-                                            className="w-full h-48 object-cover"
-                                        />
-                                        {photo.title && (
-                                            <div className="p-3">
-                                                <p className="font-semibold">{photo.title}</p>
-                                                {photo.description && (
-                                                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                                                        {photo.description}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
+                            <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1">
+                                {referencePhotos.map((photo) => {
+                                    const fullUrl = resolveCoolerPhotoUrl(photo.photo_url || photo.image_url);
+                                    return (
+                                        <div key={photo.id} className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50 shadow-xs">
+                                            <a href={fullUrl} target="_blank" rel="noopener noreferrer" title="Toca para ver imagen completa">
+                                                <img
+                                                    src={fullUrl}
+                                                    alt={photo.title || 'Referencia de enfriador'}
+                                                    className="w-full h-56 object-contain bg-white p-2"
+                                                />
+                                            </a>
+                                            {photo.title && (
+                                                <div className="p-3 bg-white border-t border-gray-200">
+                                                    <p className="font-bold text-gray-900 text-sm">{photo.title}</p>
+                                                    {photo.description && (
+                                                        <p className="text-xs text-gray-600 mt-1">
+                                                            {photo.description}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
 
                     {/* Upload Section */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                            <Camera className="w-5 h-5" />
-                            Subir Tu Foto
-                        </h2>
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6 flex flex-col justify-between">
+                        <div>
+                            <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                                <Camera className="w-5 h-5 text-emerald-600" />
+                                Tomar Foto en Vivo
+                            </h2>
+                            <p className="text-xs sm:text-sm text-gray-600 mb-4 leading-relaxed">
+                                Toma una fotografía clara de frente a tu enfriador directamente con la cámara (no se permiten fotos de galería).
+                            </p>
 
-                        {previewUrl ? (
-                            <div className="mb-4">
-                                <img
-                                    src={previewUrl}
-                                    alt="Preview"
-                                    className="w-full h-64 object-cover rounded-lg"
-                                />
-                                <button
-                                    onClick={() => {
-                                        setSelectedFile(null);
-                                        setPreviewUrl(null);
-                                    }}
-                                    className="mt-2 text-sm text-red-600 hover:underline"
-                                >
-                                    Elegir otra foto
-                                </button>
-                            </div>
-                        ) : (
-                            <label className="block mb-4">
-                                <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-12 text-center hover:border-blue-500 cursor-pointer transition-colors">
-                                    <Camera className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                                    <p className="text-gray-600 dark:text-gray-400 mb-1">
-                                        Click para seleccionar una foto
-                                    </p>
-                                    <p className="text-sm text-gray-500">
-                                        JPG, PNG hasta 10MB
-                                    </p>
+                            {previewUrl ? (
+                                <div className="mb-4">
+                                    <div className="border border-gray-200 rounded-xl overflow-hidden bg-gray-100">
+                                        <img
+                                            src={previewUrl}
+                                            alt="Preview"
+                                            className="w-full h-64 object-contain"
+                                        />
+                                    </div>
+                                    <div className="mt-2.5 flex items-center justify-between text-xs text-gray-500">
+                                        <span>
+                                            Foto lista {selectedFile ? `(${Math.round(selectedFile.size / 1024)} KB optimizado)` : ''}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setSelectedFile(null);
+                                                setPreviewUrl(null);
+                                                setCameraOpen(true);
+                                            }}
+                                            className="text-xs text-red-600 hover:underline font-bold"
+                                        >
+                                            Tomar otra foto
+                                        </button>
+                                    </div>
                                 </div>
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleFileSelect}
-                                    className="hidden"
-                                />
-                            </label>
-                        )}
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setCameraOpen(true)}
+                                    disabled={compressing}
+                                    className="block w-full mb-4 text-left"
+                                >
+                                    <div className="border-2 border-dashed border-gray-300 rounded-2xl p-8 sm:p-12 text-center hover:border-emerald-500 hover:bg-emerald-50/20 cursor-pointer transition-all bg-gray-50">
+                                        {compressing ? (
+                                            <Loader2 className="w-12 h-12 mx-auto text-emerald-600 animate-spin mb-3" />
+                                        ) : (
+                                            <div className="w-14 h-14 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto mb-3 text-emerald-700">
+                                                <Camera className="w-7 h-7" />
+                                            </div>
+                                        )}
+                                        <p className="text-gray-800 font-bold text-sm sm:text-base mb-1">
+                                            {compressing ? 'Optimizando foto...' : 'Abrir Cámara Directa'}
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            Solo captura en vivo · Compresión automática para cuidar tus datos
+                                        </p>
+                                    </div>
+                                </button>
+                            )}
 
-                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-                            <div className="flex gap-2">
-                                <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                                <div className="text-sm text-blue-800 dark:text-blue-300">
-                                    <p className="font-semibold mb-1">Consejos para una buena foto:</p>
-                                    <ul className="list-disc list-inside space-y-1">
-                                        <li>Asegúrate de que el enfriador esté limpio</li>
-                                        <li>Todos los productos deben ser visibles</li>
-                                        <li>Buena iluminación</li>
-                                        <li>Foto nítida y sin movimiento</li>
-                                    </ul>
+                            {/* Tips Card */}
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-5 text-xs text-emerald-900">
+                                <div className="flex gap-2.5 items-start">
+                                    <AlertCircle className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="font-bold mb-1">Requisitos para recibir tus puntos:</p>
+                                        <ul className="list-disc list-inside space-y-0.5 text-emerald-800">
+                                            <li>Enfriador limpio y ordenado</li>
+                                            <li>Marcas oficiales UM6 SHOP visibles de frente</li>
+                                            <li>Buena iluminación, sin reflejos excesivos ni movimiento</li>
+                                        </ul>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
                         <button
                             onClick={handleSubmit}
-                            disabled={!selectedFile || uploading}
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            disabled={!selectedFile || uploading || compressing}
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-md shadow-emerald-700/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base active:scale-[0.98]"
                         >
                             {uploading ? (
                                 <>
                                     <Loader2 className="w-5 h-5 animate-spin" />
-                                    Enviando...
+                                    Enviando para Revisión...
                                 </>
                             ) : (
                                 <>
                                     <Camera className="w-5 h-5" />
-                                    Enviar Foto
+                                    Enviar Foto para Puntos
                                 </>
                             )}
                         </button>
                     </div>
                 </div>
             </div>
+
+            <DirectCameraModal
+                isOpen={cameraOpen}
+                onClose={() => setCameraOpen(false)}
+                onCapture={handleCameraCapture}
+                title="Foto de Enfriador (Solo Cámara)"
+            />
         </div>
     );
 }
