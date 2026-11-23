@@ -149,7 +149,7 @@ export default function ProductCard3D({
             data-product-brand={productBrandName}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
-            className="perspective-1200 relative w-full h-[365px] sm:h-[325px] select-none"
+            className="perspective-1200 relative w-full h-[390px] sm:h-[325px] select-none"
         >
             <div
                 className="shop-card-3d-inner preserve-3d relative w-full h-full"
@@ -270,7 +270,7 @@ export default function ProductCard3D({
                         {/* EN TELÉFONO (< sm): Selector directo de Paquetes/Piezas + Precio + Cantidad y Agregar desde el principio */}
                         <div className="sm:hidden space-y-1.5 pt-0.5" onClick={(e) => e.stopPropagation()}>
                             {presentations.length > 0 && (
-                                <div className="flex flex-wrap gap-1 max-h-[42px] overflow-y-auto scrollbar-hide">
+                                <div className="flex flex-wrap gap-1">
                                     {presentations.map((pres) => {
                                         const isActivePres = selectedPres?.code === pres.code;
                                         return (
@@ -278,7 +278,7 @@ export default function ProductCard3D({
                                                 key={pres.code}
                                                 type="button"
                                                 onClick={() => onSelectPresentation(product.sku, pres.code)}
-                                                className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded-md border transition-all ${
+                                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border leading-tight whitespace-nowrap transition-all ${
                                                     isActivePres
                                                         ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
                                                         : 'bg-slate-50 text-slate-700 border-slate-200'
@@ -470,15 +470,15 @@ export default function ProductCard3D({
                         ))}
                     </div>
 
-                    {/* Selector de Formato de Compra (no voltea la tarjeta al tocar) */}
+                    {/* Selector de Formato de Compra (aprovecha todo el espacio disponible sin cortarse ni dejar hueco vacío) */}
                     <div
-                        className="relative z-10 px-2.5 pt-1 pb-1 cursor-default"
+                        className="relative z-10 flex-1 min-h-0 flex flex-col px-2.5 pt-1 pb-1.5 cursor-default"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <p className="text-[8.5px] font-bold uppercase tracking-wider text-emerald-200/80 mb-1">
+                        <p className="text-[8.5px] font-bold uppercase tracking-wider text-emerald-200/80 mb-1 shrink-0">
                             Formato de compra
                         </p>
-                        <div className="flex flex-wrap gap-1 max-h-[58px] overflow-y-auto scrollbar-hide pb-0.5">
+                        <div className="flex flex-wrap content-start gap-1 flex-1 min-h-0 overflow-y-auto scrollbar-hide">
                             {displayPresentations.map((pres) => {
                                 const isActivePres = selectedPres
                                     ? selectedPres.code === pres.code
@@ -492,7 +492,7 @@ export default function ProductCard3D({
                                                 onSelectPresentation(product.sku, pres.code);
                                             }
                                         }}
-                                        className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-md border transition-all ${
+                                        className={`text-[9px] sm:text-[9.5px] font-extrabold px-2 py-1 rounded-md border leading-tight whitespace-nowrap transition-all ${
                                             isActivePres
                                                 ? 'bg-emerald-500 text-white border-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.45)]'
                                                 : 'bg-white/10 text-emerald-100 border-white/15 hover:bg-white/20'
