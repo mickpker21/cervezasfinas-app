@@ -883,10 +883,13 @@ export default function ShopAdmin() {
                         isFormData = true;
                         const fd = new FormData();
                         Object.keys(payload).forEach(key => {
+                            if (key === 'imageFile') return;
                             if (key === 'presentations' && Array.isArray(payload[key])) {
                                 fd.append(key, JSON.stringify(payload[key]));
-                            } else {
+                            } else if (payload[key] !== null && payload[key] !== undefined) {
                                 fd.append(key, payload[key]);
+                            } else {
+                                fd.append(key, '');
                             }
                         });
                         fd.append('image', item.imageFile);
@@ -1475,7 +1478,7 @@ export default function ShopAdmin() {
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center justify-between">
                                         <span>Marca del Producto</span>
-                                        <span className="text-[10px] text-blue-400 font-normal">Filtro de la Tienda</span>
+                                        <span className="text-[10px] text-blue-400 font-normal">Filtro y Ficha 3D</span>
                                     </label>
                                     <select
                                         className="w-full bg-gray-800 border border-gray-700 text-white p-2.5 rounded-lg focus:border-emerald-500 outline-none"
@@ -1487,6 +1490,79 @@ export default function ShopAdmin() {
                                             <option key={b.id || b.name} value={b.name}>{b.name}</option>
                                         ))}
                                     </select>
+                                </div>
+
+                                {/* DETALLES DE FICHA 3D DE LA TIENDA (EMPRESA, PRESENTACIÓN, TAMAÑO) */}
+                                <div className="col-span-full pt-3 border-t border-gray-800 space-y-2.5">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm font-semibold text-emerald-300">
+                                            🪪 Detalle de Tarjeta 3D (UM6 Shop)
+                                        </span>
+                                        <span className="text-[11px] text-gray-400">
+                                            Se muestra en el reverso de la tarjeta en la tienda
+                                        </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-gray-300 mb-1">Empresa / Proveedor</label>
+                                            <input
+                                                list="shop-empresas-list"
+                                                placeholder="Ej: HEINEKEN MÉXICO"
+                                                className="w-full bg-gray-800 border border-gray-700 text-white p-2.5 rounded-lg focus:border-emerald-500 outline-none text-sm"
+                                                value={newItem.empresa || ''}
+                                                onChange={e => setNewItem({ ...newItem, empresa: e.target.value })}
+                                            />
+                                            <datalist id="shop-empresas-list">
+                                                <option value="HEINEKEN MÉXICO" />
+                                                <option value="CERVEZAS FINAS" />
+                                                <option value="GRUPO MODELO" />
+                                                <option value="COCA-COLA FEMSA" />
+                                            </datalist>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-semibold text-gray-300 mb-1">Presentación (Envase)</label>
+                                            <input
+                                                list="shop-presentaciones-list"
+                                                placeholder="Ej: Botella Retornable, Lata..."
+                                                className="w-full bg-gray-800 border border-gray-700 text-white p-2.5 rounded-lg focus:border-emerald-500 outline-none text-sm"
+                                                value={newItem.presentacion || ''}
+                                                onChange={e => setNewItem({ ...newItem, presentacion: e.target.value })}
+                                            />
+                                            <datalist id="shop-presentaciones-list">
+                                                <option value="Botella Retornable" />
+                                                <option value="Botella No Retornable" />
+                                                <option value="Lata" />
+                                                <option value="Botella PET" />
+                                                <option value="Barril" />
+                                                <option value="Bolsa / Empaque" />
+                                                <option value="Caja" />
+                                            </datalist>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-semibold text-gray-300 mb-1">Tamaño / Contenido</label>
+                                            <input
+                                                list="shop-tamanos-list"
+                                                placeholder="Ej: 355 ML, 473 ML, 1.2 L..."
+                                                className="w-full bg-gray-800 border border-gray-700 text-white p-2.5 rounded-lg focus:border-emerald-500 outline-none text-sm"
+                                                value={newItem.tamano || ''}
+                                                onChange={e => setNewItem({ ...newItem, tamano: e.target.value })}
+                                            />
+                                            <datalist id="shop-tamanos-list">
+                                                <option value="190 ML" />
+                                                <option value="210 ML" />
+                                                <option value="325 ML" />
+                                                <option value="355 ML" />
+                                                <option value="473 ML" />
+                                                <option value="710 ML" />
+                                                <option value="940 ML" />
+                                                <option value="1.2 L" />
+                                                <option value="63 GR" />
+                                                <option value="3 KG" />
+                                            </datalist>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="flex items-center">

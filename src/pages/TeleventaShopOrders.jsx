@@ -148,35 +148,72 @@ export default function TeleventaShopOrders() {
         const resolveAllowedRoutes = async () => {
             const metaRole = String(user?.user_metadata?.role || user?.role || '').trim().toLowerCase();
             let finalRole = metaRole;
-            let rawRoute = user?.user_metadata?.route || user?.user_metadata?.ruta || null;
+            const collected = new Map();
+            const addRoutes = (raw) => {
+                splitRouteValues(raw).forEach(entry => {
+                    const clean = String(entry || '').trim();
+                    if (!clean) return;
+                    const key = normalizeRouteKey(clean);
+                    if (key && !collected.has(key)) collected.set(key, clean.toUpperCase());
+                });
+            };
+
+            const metaRoute = user?.user_metadata?.route || user?.user_metadata?.ruta || null;
+            if (metaRoute) addRoutes(metaRoute);
             try {
-                if (!rawRoute) {
-                    rawRoute = localStorage.getItem(`televenta_user_route_${user.id}`) || null;
-                }
+                const cachedAllowed = localStorage.getItem(`televenta_allowed_routes_${user.id}`);
+                if (cachedAllowed) addRoutes(JSON.parse(cachedAllowed));
+            } catch {}
+            try {
+                const cachedSingle = localStorage.getItem(`televenta_user_route_${user.id}`);
+                if (cachedSingle) addRoutes(cachedSingle);
             } catch {}
 
-            if (!FULL_ACCESS_ORDER_ROLES.has(finalRole) && typeof navigator !== 'undefined' && navigator.onLine !== false) {
+            if (!FULL_ACCESS_ORDER_ROLES.has(finalRole) && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
                 try {
-                    const { data: profileRows } = await supabase
-                        .from('profiles')
-                        .select('role, route')
-                        .eq('id', user.id)
-                        .limit(1);
-                    if (Array.isArray(profileRows) && profileRows.length > 0) {
-                        if (profileRows[0]?.role) {
-                            finalRole = String(profileRows[0].role).trim().toLowerCase();
-                        }
-                        if (profileRows[0]?.route) {
-                            rawRoute = profileRows[0].route;
-                            try {
-                                localStorage.setItem(`televenta_user_route_${user.id}`, String(rawRoute));
-                            } catch {}
+                    const [salesRoutesRes, internalRoutesRes, profileRes] = await Promise.allSettled([
+                        supabase
+                            .from('supervisor_allowed_sales_routes')
+                            .select('sales_route')
+                            .eq('supervisor_id', user.id),
+                        supabase
+                            .from('supervisor_allowed_routes')
+                            .select('route')
+                            .eq('supervisor_id', user.id),
+                        supabase
+                            .from('profiles')
+                            .select('role, route')
+                            .eq('id', user.id)
+                            .limit(1)
+                    ]);
+
+                    if (profileRes.status === 'fulfilled' && Array.isArray(profileRes.value?.data) && profileRes.value.data.length > 0) {
+                        if (profileRes.value.data[0]?.role) {
+                            finalRole = String(profileRes.value.data[0].role).trim().toLowerCase();
                         }
                     }
-                } catch {}
-            } else if (rawRoute) {
-                try {
-                    localStorage.setItem(`televenta_user_route_${user.id}`, String(rawRoute));
+
+                    const remoteRoutes = [];
+                    if (salesRoutesRes.status === 'fulfilled' && Array.isArray(salesRoutesRes.value?.data)) {
+                        salesRoutesRes.value.data.forEach(r => { if (r?.sales_route) remoteRoutes.push(r.sales_route); });
+                    }
+                    if (internalRoutesRes.status === 'fulfilled' && Array.isArray(internalRoutesRes.value?.data)) {
+                        internalRoutesRes.value.data.forEach(r => { if (r?.route) remoteRoutes.push(r.route); });
+                    }
+                    if (profileRes.status === 'fulfilled' && Array.isArray(profileRes.value?.data) && profileRes.value.data[0]?.route) {
+                        remoteRoutes.push(profileRes.value.data[0].route);
+                    }
+
+                    if (remoteRoutes.length > 0) {
+                        collected.clear();
+                        remoteRoutes.forEach(addRoutes);
+                        if (metaRoute) addRoutes(metaRoute);
+                        const listToCache = Array.from(collected.values());
+                        try {
+                            localStorage.setItem(`televenta_allowed_routes_${user.id}`, JSON.stringify(listToCache));
+                            localStorage.setItem(`televenta_user_route_${user.id}`, listToCache.join(', '));
+                        } catch {}
+                    }
                 } catch {}
             }
 
@@ -184,7 +221,7 @@ export default function TeleventaShopOrders() {
             if (FULL_ACCESS_ORDER_ROLES.has(finalRole)) {
                 setAllowedRoutes([]);
             } else {
-                const parsed = splitRouteValues(rawRoute);
+                const parsed = Array.from(collected.values()).sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
                 setAllowedRoutes(parsed);
             }
         };

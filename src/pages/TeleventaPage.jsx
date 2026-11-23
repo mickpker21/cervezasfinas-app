@@ -188,6 +188,7 @@ export default function TeleventaPage() {
 
   const routeFromContext = user?.user_metadata?.route || user?.user_metadata?.ruta || null;
   const [effectiveRoute, setEffectiveRoute] = useState(routeFromContext || null);
+  const [allowedRoutesList, setAllowedRoutesList] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDayFilter, setSelectedDayFilter] = useState(new Date().getDay());
   const [selectedRouteFilter, setSelectedRouteFilter] = useState('');
@@ -210,61 +211,113 @@ export default function TeleventaPage() {
     const fetchRouteAndClients = async () => {
       setLoadingClients(true);
       try {
-        let resolvedRoute = routeFromContext || localStorage.getItem(`televenta_user_route_${user.id}`) || null;
-        if (!routeFromContext) {
+        // Recolectar TODAS las rutas permitidas desde:
+        // 1) supervisor_allowed_sales_routes
+        // 2) supervisor_allowed_routes
+        // 3) profiles.route
+        // 4) user_metadata.route / ruta
+        // 5) caché local para modo offline
+        const collectedDisplay = new Map(); // normalizedStrict -> displayLabel
+        const addRouteEntry = (raw) => {
+          splitMultiValue(raw).forEach((entry) => {
+            const clean = String(entry || '').trim();
+            if (!clean) return;
+            const strictKey = normalizeRouteStrict(clean);
+            if (!strictKey) return;
+            if (!collectedDisplay.has(strictKey)) {
+              collectedDisplay.set(strictKey, clean.toUpperCase());
+            }
+          });
+        };
+
+        // Cargar primero desde caché local + metadata para respuesta rápida / offline
+        if (routeFromContext) addRouteEntry(routeFromContext);
+        try {
+          const cachedAllowed = localStorage.getItem(`televenta_allowed_routes_${user.id}`);
+          if (cachedAllowed) addRouteEntry(JSON.parse(cachedAllowed));
+        } catch {}
+        try {
+          const cachedSingle = localStorage.getItem(`televenta_user_route_${user.id}`);
+          if (cachedSingle) addRouteEntry(cachedSingle);
+        } catch {}
+
+        // Consultar Supabase si hay red para obtener TODAS las rutas permitidas actualizadas
+        if (typeof navigator === 'undefined' || navigator.onLine !== false) {
           try {
-            const { data: profileRows } = await supabase
-              .from('profiles')
-              .select('route')
-              .eq('id', user.id)
-              .limit(1);
-            if (Array.isArray(profileRows) && profileRows.length && profileRows[0]?.route) {
-              resolvedRoute = profileRows[0].route;
+            const [salesRoutesRes, internalRoutesRes, profileRes] = await Promise.allSettled([
+              supabase
+                .from('supervisor_allowed_sales_routes')
+                .select('sales_route')
+                .eq('supervisor_id', user.id),
+              supabase
+                .from('supervisor_allowed_routes')
+                .select('route')
+                .eq('supervisor_id', user.id),
+              supabase
+                .from('profiles')
+                .select('route')
+                .eq('id', user.id)
+                .limit(1)
+            ]);
+
+            const remoteRoutes = [];
+            if (salesRoutesRes.status === 'fulfilled' && Array.isArray(salesRoutesRes.value?.data)) {
+              salesRoutesRes.value.data.forEach((r) => {
+                if (r?.sales_route) remoteRoutes.push(r.sales_route);
+              });
+            }
+            if (internalRoutesRes.status === 'fulfilled' && Array.isArray(internalRoutesRes.value?.data)) {
+              internalRoutesRes.value.data.forEach((r) => {
+                if (r?.route) remoteRoutes.push(r.route);
+              });
+            }
+            if (profileRes.status === 'fulfilled' && Array.isArray(profileRes.value?.data) && profileRes.value.data[0]?.route) {
+              remoteRoutes.push(profileRes.value.data[0].route);
+            }
+
+            if (remoteRoutes.length > 0) {
+              // Priorizar las rutas remotas + metadata actual
+              collectedDisplay.clear();
+              remoteRoutes.forEach(addRouteEntry);
+              if (routeFromContext) addRouteEntry(routeFromContext);
+              const listToCache = Array.from(collectedDisplay.values());
               try {
-                localStorage.setItem(`televenta_user_route_${user.id}`, String(resolvedRoute));
+                localStorage.setItem(`televenta_allowed_routes_${user.id}`, JSON.stringify(listToCache));
+                localStorage.setItem(`televenta_user_route_${user.id}`, listToCache.join(', '));
               } catch {}
             }
           } catch (err) {
-            console.warn('televenta: no fue posible obtener la ruta del perfil (usando caché local)', err);
+            console.warn('televenta: no fue posible consultar rutas permitidas en Supabase (usando caché local)', err);
           }
-        } else {
-          try {
-            localStorage.setItem(`televenta_user_route_${user.id}`, String(routeFromContext));
-          } catch {}
         }
-        if (active) setEffectiveRoute(resolvedRoute || null);
+
+        const resolvedRoutesDisplay = Array.from(collectedDisplay.values()).sort((a, b) =>
+          a.localeCompare(b, 'es', { numeric: true })
+        );
+        const resolvedRoute = resolvedRoutesDisplay.length > 0 ? resolvedRoutesDisplay.join(', ') : null;
+
+        if (active) {
+          setEffectiveRoute(resolvedRoute);
+          setAllowedRoutesList(resolvedRoutesDisplay);
+        }
 
         // ------------------------------------------------------------------
         // REFACTOR: Use MySQL Repository (getClientsPaged)
         // ------------------------------------------------------------------
 
-        let targetRoutes = [];
-        if (resolvedRoute) {
-          const normalizedRouteSet = new Set();
-          splitMultiValue(resolvedRoute)
-            .map((entry) => normalizeRouteValue(entry))
-            .filter(Boolean)
-            .forEach((value) => normalizedRouteSet.add(value));
-          targetRoutes = Array.from(normalizedRouteSet);
-        }
+        const targetRoutes = resolvedRoutesDisplay
+          .map((entry) => normalizeRouteValue(entry))
+          .filter(Boolean);
 
         let fetchedClients = [];
         try {
-          // If we have specific routes, filter by them.
-          // We use 'sales_routes' filter which maps to sales_route column in MySQL.
-          // If we need to match internal_route too, we might need a more complex filter 
-          // or just rely on the fact that Televenta usually targets sales_route.
-          // NOTE: 'sales_route' parameter in clients-read.php does (sales OR internal), 
-          // but 'sales_routes' (plural) parameter currently only does sales_route IN (...).
-          // To be safe, if we have multiple, we might want to use sales_routes.
-
           const filters = {};
           if (targetRoutes.length === 1) {
             // 'sales_route' singular en clients-read.php busca (sales_route = ? OR internal_route = ?)
             filters.sales_route = targetRoutes[0];
           }
-          // Si hay múltiples rutas (o ninguna), traemos hasta 3000 clientes y filtramos en cliente por sales_route O internal_route
-          const res = await getClientsPaged({ page: 1, pageSize: 3000, filters });
+          // Si hay múltiples rutas (o ninguna), traemos hasta 3500 clientes y filtramos en cliente por sales_route O internal_route
+          const res = await getClientsPaged({ page: 1, pageSize: 3500, filters });
           fetchedClients = res.data || [];
 
         } catch (err) {
@@ -272,26 +325,20 @@ export default function TeleventaPage() {
           fetchedClients = [];
         }
 
-        // Apply client-side strict filtering if needed, or trust the repository.
-        // The old logic did strict client-side filtering.
-        // We will trust the repository return but maybe keep the filtering 
-        // if user wants exact matches only? 
-        // Let's keep the filtering logic just in case the API returns "fuzzy" matches or if we want to support the "candidates" logic.
-
-        // However, since we now fetch from MySQL we have specific columns sales_route, internal_route.
-        // We can just filter on those.
-
         let filteredClients = fetchedClients;
-        if (targetRoutes.length > 0) {
-          // We re-verify strictly client side to match "CollectClientRouteCandidates" logic parity
-          // or we can skip this if we trust the API. 
-          // Given "migration", let's be robust.
-          const routeSet = new Set(targetRoutes);
+        if (resolvedRoutesDisplay.length > 0) {
           filteredClients = fetchedClients.filter((client) => {
-            // Normalized checks
-            const s = normalizeRouteValue(client.sales_route);
-            const i = normalizeRouteValue(client.internal_route);
-            return routeSet.has(s) || routeSet.has(i);
+            const candidates = [
+              client.sales_route,
+              client.internal_route,
+              client.route,
+              client.sale_route,
+              client.salesroute,
+              client.ruta
+            ].filter(Boolean);
+            return candidates.some((cRoute) =>
+              resolvedRoutesDisplay.some((tRoute) => isRouteMatchStrict(cRoute, tRoute))
+            );
           });
         }
 
@@ -807,6 +854,9 @@ export default function TeleventaPage() {
       if (!key) return;
       if (!routesMap.has(key)) routesMap.set(key, clean);
     };
+    if (Array.isArray(allowedRoutesList) && allowedRoutesList.length > 0) {
+      allowedRoutesList.forEach(addRoute);
+    }
     if (effectiveRoute) {
       splitMultiValue(effectiveRoute).forEach(addRoute);
     }
@@ -817,7 +867,7 @@ export default function TeleventaPage() {
       });
     }
     return Array.from(routesMap.values()).sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
-  }, [effectiveRoute, clients]);
+  }, [allowedRoutesList, effectiveRoute, clients]);
 
   const filteredClients = useMemo(() => {
     const search = (searchTerm || '').toString().toLowerCase();
