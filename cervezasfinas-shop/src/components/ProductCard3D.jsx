@@ -311,10 +311,11 @@ export default function ProductCard3D({
                                 <button
                                     type="button"
                                     onClick={toggleFlip}
-                                    className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md shrink-0"
+                                    aria-label="Ver detalles"
+                                    title="Ver detalles del producto"
+                                    className="w-6 h-6 inline-flex items-center justify-center text-emerald-700 bg-emerald-50 hover:bg-emerald-100 active:scale-95 border border-emerald-200 rounded-full shrink-0 transition-all"
                                 >
-                                    <RotateCw className="w-2.5 h-2.5" />
-                                    <span>Detalles</span>
+                                    <RotateCw className="w-3 h-3" />
                                 </button>
                             </div>
 
@@ -415,12 +416,12 @@ export default function ProductCard3D({
 
                 {/* ==================== CARA TRASERA (FICHA EN FILAS + PEDIDO) ==================== */}
                 <div
-                    className={`backface-hidden rotate-y-180 absolute inset-0 rounded-[22px] overflow-hidden flex flex-col bg-gradient-to-br from-[#041d13] via-[#072f1f] to-[#0a442d] text-white ${
+                    className={`backface-hidden rotate-y-180 absolute inset-0 rounded-[22px] overflow-hidden flex flex-col cursor-pointer bg-gradient-to-br from-[#041d13] via-[#072f1f] to-[#0a442d] text-white ${
                         cartQty > 0
                             ? 'border-[2.5px] border-emerald-400 ring-4 ring-emerald-400/25 shadow-[0_20px_44px_-10px_rgba(16,185,129,0.5)]'
                             : 'border border-emerald-400/35 shadow-[0_20px_42px_-12px_rgba(4,29,19,0.65)]'
                     }`}
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={toggleFlip}
                 >
                     <div className="pointer-events-none absolute -top-16 -right-16 w-40 h-40 rounded-full bg-emerald-400/15 blur-2xl" />
                     <div className="pointer-events-none absolute -bottom-16 -left-16 w-40 h-40 rounded-full bg-teal-400/10 blur-2xl" />
@@ -438,24 +439,26 @@ export default function ProductCard3D({
                         <button
                             type="button"
                             onClick={toggleFlip}
+                            aria-label="Volver a la foto"
                             title="Volver a la foto"
-                            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/10 hover:bg-white/20 text-emerald-100 text-[9px] font-bold border border-white/15 transition-colors"
+                            className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/10 hover:bg-white/20 text-emerald-100 text-[9px] font-bold border border-white/15 transition-colors"
                         >
-                            <RotateCcw className="w-2.5 h-2.5" />
-                            <span>Foto</span>
+                            <RotateCcw className="w-3 h-3" />
+                            <span className="hidden sm:inline">Foto</span>
                         </button>
                     </div>
 
-                    {/* Lista en FILAS compactas: EMPRESA, MARCA, PRESENTACIÓN, TAMAÑO */}
+                    {/* Lista en FILAS compactas: EMPRESA, MARCA, PRESENTACIÓN, TAMAÑO (en móvil solo ícono a la izquierda para más espacio) */}
                     <div className="relative z-10 px-2.5 py-1 space-y-1">
                         {specRows.map(({ icon: Icon, label, value }) => (
                             <div
                                 key={label}
+                                title={`${label}: ${value}`}
                                 className="flex items-center justify-between gap-1.5 rounded-md bg-white/[0.07] border border-white/10 px-2 py-[3px] backdrop-blur-sm"
                             >
                                 <span className="flex items-center gap-1 text-[8.5px] font-bold uppercase tracking-wider text-emerald-300/90 shrink-0">
-                                    <Icon className="w-2.5 h-2.5 shrink-0 text-emerald-400" />
-                                    {label}
+                                    <Icon className="w-3 h-3 sm:w-2.5 sm:h-2.5 shrink-0 text-emerald-400" />
+                                    <span className="hidden sm:inline">{label}</span>
                                 </span>
                                 <span
                                     className="text-[10px] font-extrabold text-white text-right truncate"
@@ -467,8 +470,11 @@ export default function ProductCard3D({
                         ))}
                     </div>
 
-                    {/* Selector de Formato de Compra (Caja / Paquete de 5 / Pieza) */}
-                    <div className="relative z-10 px-2.5 pt-1 pb-1">
+                    {/* Selector de Formato de Compra (no voltea la tarjeta al tocar) */}
+                    <div
+                        className="relative z-10 px-2.5 pt-1 pb-1 cursor-default"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <p className="text-[8.5px] font-bold uppercase tracking-wider text-emerald-200/80 mb-1">
                             Formato de compra
                         </p>
@@ -499,8 +505,11 @@ export default function ProductCard3D({
                         </div>
                     </div>
 
-                    {/* Precio activo + Cantidad + Botón Carrito */}
-                    <div className="relative z-10 mt-auto px-2.5 pb-2.5 pt-1.5 border-t border-white/10 bg-black/25">
+                    {/* Precio activo + Cantidad + Botón Carrito (no voltea la tarjeta al tocar) */}
+                    <div
+                        className="relative z-10 mt-auto px-2.5 pb-2.5 pt-1.5 border-t border-white/10 bg-black/25 cursor-default"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div className="flex items-center justify-between gap-1 mb-1">
                             {showPrices ? (
                                 <div className="flex items-baseline gap-1 min-w-0">
