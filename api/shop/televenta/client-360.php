@@ -128,6 +128,59 @@ try {
     }
 } catch (Exception $e) {}
 
+function resolveClientCodeByPhone($pdo, $rawPhone) {
+    $digits = preg_replace('/[^0-9]/', '', (string)$rawPhone);
+    if (strlen($digits) < 10) return null;
+    $last10 = substr($digits, -10);
+
+    // 1. Buscar en shop_client_users por últimos 10 dígitos
+    try {
+        $stmt = $pdo->prepare("
+            SELECT client_code
+            FROM shop_client_users
+            WHERE phone IS NOT NULL AND phone != ''
+              AND RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', ''), ')', ''), 10) = ?
+            ORDER BY is_active DESC, id DESC
+            LIMIT 1
+        ");
+        $stmt->execute([$last10]);
+        $code = trim((string)$stmt->fetchColumn());
+        if ($code !== '') return $code;
+    } catch (Exception $e) {}
+
+    // 2. Buscar en tabla maestra clients por últimos 10 dígitos
+    try {
+        $stmt = $pdo->prepare("
+            SELECT client_code
+            FROM clients
+            WHERE phone IS NOT NULL AND phone != ''
+              AND RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', ''), ')', ''), 10) = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$last10]);
+        $code = trim((string)$stmt->fetchColumn());
+        if ($code !== '') return $code;
+    } catch (Exception $e) {}
+
+    // 3. Buscar en verificaciones aprobadas de WhatsApp
+    try {
+        $stmt = $pdo->prepare("
+            SELECT client_code
+            FROM shop_whatsapp_verifications
+            WHERE status = 'APPROVED'
+              AND client_code IS NOT NULL AND client_code != ''
+              AND RIGHT(phone_number, 10) = ?
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $stmt->execute([$last10]);
+        $code = trim((string)$stmt->fetchColumn());
+        if ($code !== '') return $code;
+    } catch (Exception $e) {}
+
+    return null;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $clientCode = trim((string)($_GET['client_code'] ?? ''));
     $search = trim((string)($_GET['q'] ?? ''));
@@ -139,6 +192,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         try {
             $isWaProspect = (strpos($clientCode, 'WA-') === 0);
             $rawWaPhone = $isWaProspect ? preg_replace('/[^0-9]/', '', substr($clientCode, 3)) : '';
+
+            // Auto-resolver WA-<telefono> al cliente real si el número (últimos 10 dígitos) ya está vinculado
+            if ($isWaProspect && $rawWaPhone !== '') {
+                $resolvedCode = resolveClientCodeByPhone($pdo, $rawWaPhone);
+                if ($resolvedCode !== null) {
+                    $clientCode = $resolvedCode;
+                    $isWaProspect = false;
+                    // Auto-reparar shop_whatsapp_sessions para que ya quede vinculado
+                    try {
+                        $last10Fix = substr($rawWaPhone, -10);
+                        $bName = $pdo->prepare("SELECT business_name FROM clients WHERE client_code = ? LIMIT 1");
+                        $bName->execute([$resolvedCode]);
+                        $bnVal = (string)($bName->fetchColumn() ?: '');
+                        $pdo->prepare("
+                            UPDATE shop_whatsapp_sessions
+                            SET client_code = ?, business_name = COALESCE(NULLIF(?, ''), business_name)
+                            WHERE RIGHT(phone_number, 10) = ? AND (client_code IS NULL OR client_code = '')
+                        ")->execute([$resolvedCode, $bnVal, $last10Fix]);
+                    } catch (Exception $e) {}
+                }
+            }
 
             // 1. Datos de tabla clients
             $clientRow = null;
@@ -603,17 +677,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             foreach ($rawQueue as $rq) {
                 $code = $rq['client_code'];
+                if (strpos($code, 'WA-') === 0) {
+                    $resolvedFromMsg = resolveClientCodeByPhone($pdo, substr($code, 3));
+                    if ($resolvedFromMsg !== null) {
+                        $code = $resolvedFromMsg;
+                    }
+                }
                 $seenCodes[$code] = true;
-                $advisorQueue[$code] = [
-                    'client_code' => $code,
-                    'business_name' => 'Cliente ' . $code,
-                    'phone' => '',
-                    'sales_route' => '',
-                    'unread_count' => intval($rq['unread_count']),
-                    'last_message' => $rq['last_message'],
-                    'last_activity' => $rq['last_activity'],
-                    'bot_stage' => 'IDLE'
-                ];
+                if (!isset($advisorQueue[$code])) {
+                    $advisorQueue[$code] = [
+                        'client_code' => $code,
+                        'business_name' => 'Cliente ' . $code,
+                        'phone' => '',
+                        'sales_route' => '',
+                        'unread_count' => intval($rq['unread_count']),
+                        'last_message' => $rq['last_message'],
+                        'last_activity' => $rq['last_activity'],
+                        'bot_stage' => 'IDLE'
+                    ];
+                } else {
+                    $advisorQueue[$code]['unread_count'] += intval($rq['unread_count']);
+                }
             }
 
             $hStmt = $pdo->query("
@@ -625,7 +709,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ");
             while ($hRow = $hStmt->fetch(PDO::FETCH_ASSOC)) {
                 $cleanP = preg_replace('/[^0-9]/', '', (string)$hRow['phone_number']);
-                $code = !empty($hRow['client_code']) ? $hRow['client_code'] : ('WA-' . $cleanP);
+                $code = !empty($hRow['client_code']) ? trim((string)$hRow['client_code']) : '';
+                if ($code === '' && strlen($cleanP) >= 10) {
+                    $resolvedH = resolveClientCodeByPhone($pdo, $cleanP);
+                    if ($resolvedH !== null) {
+                        $code = $resolvedH;
+                        // Auto-reparar sesión en shop_whatsapp_sessions
+                        try {
+                            $pdo->prepare("UPDATE shop_whatsapp_sessions SET client_code = ? WHERE RIGHT(phone_number, 10) = ? AND (client_code IS NULL OR client_code = '')")
+                                ->execute([$code, substr($cleanP, -10)]);
+                        } catch (Exception $e) {}
+                    }
+                }
+                if ($code === '') {
+                    $code = 'WA-' . $cleanP;
+                }
                 if (!isset($advisorQueue[$code])) {
                     $advisorQueue[$code] = [
                         'client_code' => $code,
