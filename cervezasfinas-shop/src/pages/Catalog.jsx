@@ -18,7 +18,7 @@ import ChatWidget from '../components/ChatWidget';
 import NotificationsBell from '../components/NotificationsBell';
 import AccountModal from '../components/AccountModal';
 import ProductCard3D from '../components/ProductCard3D';
-import { SHOP_NAV_ITEMS } from '../components/BottomNav';
+import { getVisibleShopNavItems, isPointsEnabledForUser } from '../components/BottomNav';
 
 // Placeholder SVG inline para evitar peticiones adicionales cuando un SKU no tiene foto
 const PRODUCT_PLACEHOLDER_SVG = "data:image/svg+xml;utf8," + encodeURIComponent(
@@ -126,8 +126,10 @@ export default function Catalog() {
     }, [selectedPresentations]);
     const navigate = useNavigate();
     const location = useLocation();
-    const { user, logout } = useAuth();
+    const { user, logout, updateUser } = useAuth();
     const { showPrices } = useShopSettings();
+    const canEarnPoints = isPointsEnabledForUser(user);
+    const visibleNavItems = getVisibleShopNavItems(user);
 
     useEffect(() => {
         loadData();
@@ -192,6 +194,12 @@ export default function Catalog() {
             }
             if (balanceRes && typeof balanceRes.balance !== 'undefined') {
                 setPointsBalance(Number(balanceRes.balance) || 0);
+            }
+            if (balanceRes && balanceRes.points_enabled !== undefined) {
+                const liveEnabled = Number(balanceRes.points_enabled) === 1 ? 1 : 0;
+                if (user && Number(user.points_enabled ?? 1) !== liveEnabled && typeof updateUser === 'function') {
+                    updateUser({ points_enabled: liveEnabled });
+                }
             }
             if (ordersRes?.data && Array.isArray(ordersRes.data)) {
                 setRecentOrder(ordersRes.data[0] || null);
@@ -609,7 +617,7 @@ export default function Catalog() {
 
                             {/* Botones de acción en Móvil */}
                             <div className="flex md:hidden items-center gap-1.5 shrink-0">
-                                {pointsBalance !== null && (
+                                {canEarnPoints && pointsBalance !== null && (
                                     <button
                                         onClick={() => navigate('/points')}
                                         title="Ver mis puntos y premios"
@@ -654,7 +662,7 @@ export default function Catalog() {
 
                         {/* En PC / Tableta (md+): Botones de Opción de Navegación integrados en la barra superior */}
                         <div className="hidden md:flex items-center gap-1 bg-black/20 p-1 rounded-full border border-white/15 shrink-0">
-                            {SHOP_NAV_ITEMS.map(item => {
+                            {visibleNavItems.map(item => {
                                 const Icon = item.icon;
                                 const active = location.pathname === item.path;
                                 return (
@@ -720,7 +728,7 @@ export default function Catalog() {
                                 </div>
                             </button>
 
-                            {pointsBalance !== null && (
+                            {canEarnPoints && pointsBalance !== null && (
                                 <button
                                     onClick={() => navigate('/points')}
                                     title="Ver mis puntos y premios"

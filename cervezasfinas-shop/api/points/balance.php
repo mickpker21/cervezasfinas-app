@@ -1,5 +1,6 @@
 <?php
 require_once '../common.php';
+require_once __DIR__ . '/ledger.php';
 
 handleCORS();
 
@@ -13,49 +14,35 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 try {
     $client_code = $auth['client_code'];
-    
-    // Obtener o crear registro de puntos del cliente
-    $stmt = $pdo->prepare("
-        SELECT * FROM shop_client_points WHERE client_code = ?
-    ");
-    $stmt->execute([$client_code]);
-    $clientPoints = $stmt->fetch();
-    
-    if (!$clientPoints) {
-        // Crear registro si no existe
-        $insertStmt = $pdo->prepare("
-            INSERT INTO shop_client_points (client_code, points_balance)
-            VALUES (?, 0)
-        ");
-        $insertStmt->execute([$client_code]);
-        
-        $clientPoints = [
-            'client_code' => $client_code,
-            'points_balance' => 0,
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s')
-        ];
-    }
-    
-    // Calcular puntos que expiran pronto (en los próximos 30 días)
-    $expiringStmt = $pdo->prepare("
-        SELECT SUM(points) as expiring_points
-        FROM shop_points_transactions
-        WHERE client_code = ?
-        AND type = 'earned'
-        AND expires_at IS NOT NULL
-        AND expires_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 30 DAY)
-        AND expires_at > NOW()
-    ");
-    $expiringStmt->execute([$client_code]);
-    $expiring = $expiringStmt->fetch();
-    
+
+    // Verificar si el cliente tiene habilitada la acumulación de puntos
+    $pointsEnabled = 1;
+    try {
+        $peStmt = $pdo->prepare("SELECT COALESCE(points_enabled, 1) FROM shop_client_users WHERE client_code = ? LIMIT 1");
+        $peStmt->execute([$client_code]);
+        $peVal = $peStmt->fetchColumn();
+        if ($peVal !== false) {
+            $pointsEnabled = ((int)$peVal === 1) ? 1 : 0;
+        }
+    } catch (Exception $e) {}
+
+    // Calcular el saldo real en vivo (descontando lotes expirados y canjes)
+    $ledger = getClientPointsLedger($pdo, $client_code);
+    $balance = (int)($ledger['balance'] ?? 0);
+    $expiringSoon = (int)($ledger['expiring_soon'] ?? 0);
+    $nextExpiresAt = $ledger['next_expires_at'] ?? null;
+    $expiredPoints = (int)($ledger['expired_points'] ?? 0);
+
     sendJSON([
         'success' => true,
         'data' => [
-            'balance' => intval($clientPoints['points_balance']),
-            'expiring_soon' => intval($expiring['expiring_points'] ?? 0),
-            'updated_at' => $clientPoints['updated_at']
+            'balance' => $balance,
+            'points_balance' => $balance,
+            'points_enabled' => $pointsEnabled,
+            'expiring_soon' => $expiringSoon,
+            'next_expires_at' => $nextExpiresAt,
+            'expired_points' => $expiredPoints,
+            'updated_at' => date('Y-m-d H:i:s')
         ]
     ]);
     

@@ -1851,7 +1851,7 @@ export default function ShopAdmin() {
                 <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
                     <div className="flex gap-2 w-full md:w-auto">
                         <button
-                            onClick={() => { setShowClientPassword(false); setNewItem({ client_code: '', password: '', phone: '', gec: 'Bronce', is_active: 1 }); }}
+                            onClick={() => { setShowClientPassword(false); setNewItem({ client_code: '', password: '', phone: '', gec: 'Bronce', is_active: 1, points_enabled: 1 }); }}
                             className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-1.5 rounded-lg shadow-lg shadow-blue-900/40 hover:shadow-blue-900/60 transition-all flex items-center justify-center gap-1.5 font-bold text-sm"
                         >
                             <Plus className="w-4 h-4" /> Nuevo Cliente
@@ -1995,15 +1995,32 @@ export default function ShopAdmin() {
                                     <p className="text-[10px] text-gray-500 mt-1">Se actualiza automáticamente desde la base de datos maestra.</p>
                                 </div>
 
-                                <div className="flex items-center md:col-span-2">
-                                    <label className="flex items-center gap-2 cursor-pointer">
+                                <div className="flex flex-col gap-3 md:col-span-2 pt-2 border-t border-gray-800">
+                                    <label className="flex items-center gap-2.5 cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={newItem.is_active == 1}
                                             onChange={e => setNewItem({ ...newItem, is_active: e.target.checked ? 1 : 0 })}
                                             className="w-4 h-4 rounded border-gray-700"
                                         />
-                                        <span className="text-gray-300">Cliente Activo en Tienda</span>
+                                        <span className="text-gray-200 font-semibold text-sm">Cliente Activo en Tienda</span>
+                                    </label>
+
+                                    <label className="flex items-start gap-2.5 cursor-pointer p-3 rounded-xl bg-gray-900/70 border border-gray-800 hover:border-amber-500/40 transition-colors">
+                                        <input
+                                            type="checkbox"
+                                            checked={newItem.points_enabled === undefined ? true : Number(newItem.points_enabled) === 1}
+                                            onChange={e => setNewItem({ ...newItem, points_enabled: e.target.checked ? 1 : 0 })}
+                                            className="w-4 h-4 mt-0.5 rounded border-gray-700"
+                                        />
+                                        <div>
+                                            <span className="text-amber-300 font-bold text-sm block">
+                                                ⭐ Acumula Puntos de Lealtad
+                                            </span>
+                                            <span className="text-[11px] text-gray-400 block mt-0.5">
+                                                Si lo desactivas, el cliente podrá entrar y hacer pedidos normalmente, pero NO generará puntos y se ocultarán las pestañas de Puntos, Canjear y Enfriador en su Shop.
+                                            </span>
+                                        </div>
                                     </label>
                                 </div>
                             </div>
@@ -2036,6 +2053,7 @@ export default function ShopAdmin() {
                                 <th className="p-4 font-bold text-blue-400">GEC</th>
                                 <th className="p-4 font-bold text-blue-400">Último Login</th>
                                 <th className="p-4 font-bold text-blue-400">Activo</th>
+                                <th className="p-4 font-bold text-blue-400">Puntos</th>
                                 <th className="p-4 font-bold text-blue-400">Acciones</th>
                             </tr>
                         </thead>
@@ -2065,8 +2083,19 @@ export default function ShopAdmin() {
                                         )}
                                     </td>
                                     <td className="p-4">
+                                        {Number(item.points_enabled ?? 1) === 1 ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                                ⭐ Sí
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-700/60 text-slate-300 border border-slate-600">
+                                                Solo Pedidos
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="p-4">
                                         <button
-                                            onClick={() => { setShowClientPassword(false); setEditingItem(item); setNewItem({ ...item, password: '' }); }}
+                                            onClick={() => { setShowClientPassword(false); setEditingItem(item); setNewItem({ ...item, points_enabled: item.points_enabled ?? 1, password: '' }); }}
                                             className="text-blue-400 hover:bg-blue-900/30 p-2 rounded-lg transition-colors"
                                             title="Editar teléfono / contraseña"
                                         >

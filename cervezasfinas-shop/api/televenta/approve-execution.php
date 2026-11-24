@@ -2,6 +2,7 @@
 require_once '../common.php';
 
 handleCORS();
+requireSupabaseRole(['admin', 'televenta', 'supervisor', 'operaciones', 'jefe de operaciones']);
 
 $pdo = getDB();
 
@@ -11,26 +12,62 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $input = json_decode(file_get_contents('php://input'), true);
+if (!is_array($input)) {
+    sendJSON(['error' => 'Invalid JSON body'], 400);
+}
 $execution_id = intval($input['execution_id'] ?? 0);
 $points_awarded = intval($input['points_awarded'] ?? 0);
+$client_code_in = trim((string)($input['client_code'] ?? ''));
+$photo_url_in = trim((string)($input['photo_url'] ?? ''));
 
-if ($execution_id <= 0 || $points_awarded < 0 || $points_awarded > 100) {
-    sendJSON(['error' => 'Invalid parameters'], 400);
+if ($points_awarded < 0 || $points_awarded > 100000) {
+    sendJSON(['error' => 'Invalid points parameter'], 400);
 }
 
 try {
     $pdo->beginTransaction();
     
-    // 1. Obtener ejecución
-    $execStmt = $pdo->prepare("SELECT * FROM shop_cooler_executions WHERE id = ? AND status = 'pending'");
-    $execStmt->execute([$execution_id]);
-    $execution = $execStmt->fetch();
-    
+    // 1. Obtener ejecución (por id, o respaldo por client_code si el id era 0)
+    $execution = null;
+    if ($execution_id > 0) {
+        $execStmt = $pdo->prepare("SELECT * FROM shop_cooler_executions WHERE id = ? AND status = 'pending' FOR UPDATE");
+        $execStmt->execute([$execution_id]);
+        $execution = $execStmt->fetch();
+    }
+
+    if (!$execution && $client_code_in !== '') {
+        $execStmt = $pdo->prepare("SELECT * FROM shop_cooler_executions WHERE client_code = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1 FOR UPDATE");
+        $execStmt->execute([$client_code_in]);
+        $execution = $execStmt->fetch();
+        if ($execution) {
+            $execution_id = (int)$execution['id'];
+        }
+    }
+
     if (!$execution) {
+        $pdo->rollBack();
         sendJSON(['error' => 'Execution not found or already processed'], 404);
+    }
+
+    // Si aún tenía id <= 0, asignarle un ID positivo único antes de aprobar
+    if ($execution_id <= 0) {
+        $execution_id = (int)$pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM shop_cooler_executions")->fetchColumn();
+        if ($execution_id <= 0) $execution_id = 1;
+        $fixStmt = $pdo->prepare("UPDATE shop_cooler_executions SET id = ? WHERE client_code = ? AND status = 'pending' AND id <= 0 LIMIT 1");
+        $fixStmt->execute([$execution_id, $execution['client_code']]);
     }
     
     $client_code = $execution['client_code'];
+
+    // Verificar si el cliente tiene habilitada la acumulación de puntos (points_enabled = 1)
+    try {
+        $peStmt = $pdo->prepare("SELECT COALESCE(points_enabled, 1) FROM shop_client_users WHERE client_code = ? AND is_active = 1 LIMIT 1");
+        $peStmt->execute([$client_code]);
+        $peVal = $peStmt->fetchColumn();
+        if ($peVal === false || (int)$peVal !== 1) {
+            $points_awarded = 0;
+        }
+    } catch (Throwable $e) {}
     
     // 2. Actualizar ejecución
     $updateStmt = $pdo->prepare("
@@ -38,20 +75,26 @@ try {
         SET status = 'approved', 
             points_awarded = ?,
             reviewed_at = NOW()
-        WHERE id = ?
+        WHERE id = ? AND status = 'pending'
     ");
     $updateStmt->execute([$points_awarded, $execution_id]);
+    if ($updateStmt->rowCount() < 1) {
+        $pdo->rollBack();
+        sendJSON(['error' => 'Execution was already processed'], 409);
+    }
     
     // 3. Otorgar puntos (expiran en 6 meses)
     if ($points_awarded > 0) {
         $expires_at = date('Y-m-d H:i:s', strtotime('+6 months'));
+        $nextTxId = (int)$pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM shop_points_transactions")->fetchColumn();
+        if ($nextTxId <= 0) $nextTxId = 1;
         
         $transStmt = $pdo->prepare("
             INSERT INTO shop_points_transactions 
-            (client_code, type, points, reason, related_execution_id, expires_at)
-            VALUES (?, 'earned', ?, 'Ejecución de enfriador aprobada', ?, ?)
+            (id, client_code, type, points, reason, related_execution_id, expires_at)
+            VALUES (?, ?, 'earned', ?, 'Ejecución de enfriador aprobada', ?, ?)
         ");
-        $transStmt->execute([$client_code, $points_awarded, $execution_id, $expires_at]);
+        $transStmt->execute([$nextTxId, $client_code, $points_awarded, $execution_id, $expires_at]);
         
         // Actualizar balance
         $balanceStmt = $pdo->prepare("
@@ -65,6 +108,12 @@ try {
     }
     
     $pdo->commit();
+
+    try {
+        require_once __DIR__ . '/../notifications/push-helper.php';
+        $ptsTxt = ($points_awarded > 0) ? " y ganaste +" . number_format($points_awarded) . " puntos" : "";
+        sendShopPushToClient($pdo, $client_code, "📸 ¡Foto de enfriador aprobada!", "Tu foto fue validada por Televenta{$ptsTxt}.", "/cooler-execution");
+    } catch (Exception $e) {}
     
     sendJSON([
         'success' => true,
@@ -73,7 +122,9 @@ try {
     ]);
     
 } catch (PDOException $e) {
-    $pdo->rollBack();
-    sendJSON(['error' => 'Database error'], 500);
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    sendJSON(['error' => 'Database error: ' . $e->getMessage()], 500);
 }
 ?>
