@@ -367,56 +367,58 @@ async function renderTicketCanvasNative({ saleData, client, pointsInfo, verifica
     ctx.fillText(`$${finalTotal.toFixed(2)}`, width - padX, y);
     y += 22;
 
-    // 10. RECUADRO PROGRAMA DE LEALTAD UM6 SHOP (PUNTOS)
-    const boxTop = y;
-    const boxHeight = earnedPts > 0 ? 118 : 102;
-    ctx.save();
-    ctx.fillStyle = '#f9fafb';
-    ctx.fillRect(padX, boxTop, contentW, boxHeight);
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([5, 3]);
-    ctx.strokeRect(padX, boxTop, contentW, boxHeight);
-    ctx.restore();
+    // 10. RECUADRO PROGRAMA DE LEALTAD UM6 SHOP (PUNTOS) - Solo para clientes con acumulación de puntos activa
+    if (isShopActive) {
+        const boxTop = y;
+        const boxHeight = earnedPts > 0 ? 118 : 102;
+        ctx.save();
+        ctx.fillStyle = '#f9fafb';
+        ctx.fillRect(padX, boxTop, contentW, boxHeight);
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 3]);
+        ctx.strokeRect(padX, boxTop, contentW, boxHeight);
+        ctx.restore();
 
-    y += 15;
-    ctx.fillStyle = '#000000';
-    ctx.font = `900 10.5px ${fontMono}`;
-    ctx.textAlign = 'center';
-    ctx.fillText('★ PROGRAMA DE LEALTAD UM6 SHOP ★', centerX, y);
-    y += 10;
-    drawDashedLine(y, '#000000', 1);
-    y += 14;
+        y += 15;
+        ctx.fillStyle = '#000000';
+        ctx.font = `900 10.5px ${fontMono}`;
+        ctx.textAlign = 'center';
+        ctx.fillText('★ PROGRAMA DE LEALTAD UM6 SHOP ★', centerX, y);
+        y += 10;
+        drawDashedLine(y, '#000000', 1);
+        y += 14;
 
-    ctx.font = `bold 11px ${fontMono}`;
-    ctx.textAlign = 'left';
-    ctx.fillText('PUNTOS ACUMULADOS:', padX + 10, y);
-    ctx.textAlign = 'right';
-    ctx.fillText(`${balancePts.toLocaleString('es-MX')} PTS`, width - padX - 10, y);
-    y += 16;
-
-    if (earnedPts > 0) {
+        ctx.font = `bold 11px ${fontMono}`;
         ctx.textAlign = 'left';
-        ctx.fillText('ESTE PEDIDO SUMA:', padX + 10, y);
+        ctx.fillText('PUNTOS ACUMULADOS:', padX + 10, y);
         ctx.textAlign = 'right';
-        ctx.fillText(`+${earnedPts.toLocaleString('es-MX')} PTS`, width - padX - 10, y);
+        ctx.fillText(`${balancePts.toLocaleString('es-MX')} PTS`, width - padX - 10, y);
         y += 16;
+
+        if (earnedPts > 0) {
+            ctx.textAlign = 'left';
+            ctx.fillText('ESTE PEDIDO SUMA:', padX + 10, y);
+            ctx.textAlign = 'right';
+            ctx.fillText(`+${earnedPts.toLocaleString('es-MX')} PTS`, width - padX - 10, y);
+            y += 16;
+        }
+
+        ctx.font = `900 11.5px ${fontMono}`;
+        ctx.textAlign = 'left';
+        ctx.fillText('NUEVO SALDO ESTIMADO:', padX + 10, y);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${estimatedTotalPts.toLocaleString('es-MX')} PTS`, width - padX - 10, y);
+        y += 16;
+
+        ctx.font = `bold 9.5px ${fontMono}`;
+        ctx.textAlign = 'center';
+        ctx.fillText('¡Escanea el código QR o entra a', centerX, y);
+        y += 12;
+        ctx.fillText('cervezasfinas.com.mx para canjear tus puntos!', centerX, y);
+
+        y = boxTop + boxHeight + 18;
     }
-
-    ctx.font = `900 11.5px ${fontMono}`;
-    ctx.textAlign = 'left';
-    ctx.fillText('NUEVO SALDO ESTIMADO:', padX + 10, y);
-    ctx.textAlign = 'right';
-    ctx.fillText(`${estimatedTotalPts.toLocaleString('es-MX')} PTS`, width - padX - 10, y);
-    y += 16;
-
-    ctx.font = `bold 9.5px ${fontMono}`;
-    ctx.textAlign = 'center';
-    ctx.fillText('¡Escanea el código QR o entra a', centerX, y);
-    y += 12;
-    ctx.fillText('cervezasfinas.com.mx para canjear tus puntos!', centerX, y);
-
-    y = boxTop + boxHeight + 18;
 
     // 11. SITIO WEB Y CÓDIGO QR
     ctx.fillStyle = '#000000';
@@ -669,29 +671,31 @@ const ReceiptTicket = ({ saleData, client, pointsInfo, verificationCode, qrConta
                 </div>
             </div>
 
-            {/* SECCIÓN DE PROGRAMA DE LEALTAD (PUNTOS DEL CLIENTE) */}
-            <div className="mb-4 pb-3 pt-2.5 px-3 border-2 border-dashed border-black bg-gray-50 text-left w-full box-border">
-                <div className="text-center font-black text-[11px] uppercase tracking-wider mb-2 pb-1.5 border-b border-dashed border-black w-full">
-                    ★ PROGRAMA DE LEALTAD UM6 SHOP ★
-                </div>
-                <div className="flex justify-between items-center text-xs mb-1">
-                    <span>PUNTOS ACUMULADOS:</span>
-                    <span className="font-extrabold">{balancePts.toLocaleString('es-MX')} PTS</span>
-                </div>
-                {earnedPts > 0 && (
-                    <div className="flex justify-between items-center text-xs mb-1">
-                        <span>ESTE PEDIDO SUMA:</span>
-                        <span className="font-extrabold text-black">+{earnedPts.toLocaleString('es-MX')} PTS</span>
+            {/* SECCIÓN DE PROGRAMA DE LEALTAD (PUNTOS DEL CLIENTE) - Solo si tiene acumulación de puntos activa */}
+            {isShopActive && (
+                <div className="mb-4 pb-3 pt-2.5 px-3 border-2 border-dashed border-black bg-gray-50 text-left w-full box-border">
+                    <div className="text-center font-black text-[11px] uppercase tracking-wider mb-2 pb-1.5 border-b border-dashed border-black w-full">
+                        ★ PROGRAMA DE LEALTAD UM6 SHOP ★
                     </div>
-                )}
-                <div className="flex justify-between items-center text-xs font-black border-t border-dashed border-gray-400 pt-1.5 mt-1">
-                    <span>NUEVO SALDO ESTIMADO:</span>
-                    <span>{estimatedTotalPts.toLocaleString('es-MX')} PTS</span>
+                    <div className="flex justify-between items-center text-xs mb-1">
+                        <span>PUNTOS ACUMULADOS:</span>
+                        <span className="font-extrabold">{balancePts.toLocaleString('es-MX')} PTS</span>
+                    </div>
+                    {earnedPts > 0 && (
+                        <div className="flex justify-between items-center text-xs mb-1">
+                            <span>ESTE PEDIDO SUMA:</span>
+                            <span className="font-extrabold text-black">+{earnedPts.toLocaleString('es-MX')} PTS</span>
+                        </div>
+                    )}
+                    <div className="flex justify-between items-center text-xs font-black border-t border-dashed border-gray-400 pt-1.5 mt-1">
+                        <span>NUEVO SALDO ESTIMADO:</span>
+                        <span>{estimatedTotalPts.toLocaleString('es-MX')} PTS</span>
+                    </div>
+                    <p className="text-[10px] text-center font-medium mt-2 leading-tight">
+                        ¡Escanea el código QR o entra a cervezasfinas.com.mx para consultar y canjear tus puntos!
+                    </p>
                 </div>
-                <p className="text-[10px] text-center font-medium mt-2 leading-tight">
-                    ¡Escanea el código QR o entra a cervezasfinas.com.mx para consultar y canjear tus puntos!
-                </p>
-            </div>
+            )}
 
             {/* FOOTER & QR CODE */}
             <div className="text-center mt-4 space-y-3 w-full">
