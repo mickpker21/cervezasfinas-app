@@ -12,7 +12,7 @@ import { useSupabaseAuth } from "@/contexts/SupabaseAuthContext";
 import { kvStorage } from "@/services/kvStorage";
 import { getSalesBySku } from "@/repositories/salesRepository";
 import { getClients } from "@/repositories/clientsRepository";
-import { getGoals } from '@/repositories/goalsRepository';
+import { getGoals, getAllGoals } from '@/repositories/goalsRepository';
 import ComparativeSalesChart from "@/components/ComparativeSalesChart";
 import { getSkuImages, getSkuDescriptions } from "@/repositories/metadataRepository";
 import {
@@ -69,21 +69,31 @@ const endOfMonthISO = (year, month) => {
 };
 const normalizeRoute = (r) => (r || "").toString().trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
 
-// Helper for strict route matching (Handle "06" == "6")
+// Helper for strict route matching (Handle "06" == "6" and "RUTA 100101" == "100101")
 const isRouteMatch = (dataRoute, targetRoute) => {
   const r = normalizeRoute(dataRoute);
   const t = normalizeRoute(targetRoute);
+  if (!r || !t) return false;
 
   // Direct match
   if (r === t) return true;
 
-  // Numeric match (ignore leading zeros)
-  const nR = parseInt(r, 10);
-  const nT = parseInt(t, 10);
-  if (!isNaN(nR) && !isNaN(nT) && nR === nT) return true;
+  // Numeric match ignoring prefixes like "RUTA", "R-", and leading zeros
+  const dR = r.replace(/[^0-9]/g, "");
+  const dT = t.replace(/[^0-9]/g, "");
+  if (dR && dT) {
+    const nR = parseInt(dR, 10);
+    const nT = parseInt(dT, 10);
+    if (!isNaN(nR) && !isNaN(nT) && nR === nT) return true;
+  }
 
   return false;
-}
+};
+
+const matchesAnyRoute = (dataRoute, routeList) => {
+  if (!Array.isArray(routeList) || routeList.length === 0) return true;
+  return routeList.some((target) => isRouteMatch(dataRoute, target));
+};
 
 export default function TelesalesDashboard() {
   // ... existing code ...
@@ -182,14 +192,48 @@ export default function TelesalesDashboard() {
       setUserName(user.user_metadata?.full_name || user.email || "Usuario");
 
       try {
-        const { data: routes } = await supabase
-          .from("supervisor_allowed_sales_routes")
-          .select("sales_route")
-          .eq("supervisor_id", user.id);
+        const [salesRes, internalRes, profileRes] = await Promise.allSettled([
+          supabase
+            .from("supervisor_allowed_sales_routes")
+            .select("sales_route")
+            .eq("supervisor_id", user.id),
+          supabase
+            .from("supervisor_allowed_routes")
+            .select("route")
+            .eq("supervisor_id", user.id),
+          supabase
+            .from("profiles")
+            .select("route")
+            .eq("id", user.id)
+            .limit(1)
+        ]);
 
-        const list = (routes || [])
-          .map((r) => (r.sales_route || "").toString().trim())
-          .filter(Boolean);
+        const routeMap = new Map();
+        const addR = (raw) => {
+          if (!raw) return;
+          String(raw)
+            .split(/[,;|]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .forEach((clean) => {
+              const key = normalizeRoute(clean);
+              if (key && !routeMap.has(key)) routeMap.set(key, clean.toUpperCase());
+            });
+        };
+
+        if (salesRes.status === "fulfilled" && Array.isArray(salesRes.value?.data)) {
+          salesRes.value.data.forEach((r) => addR(r.sales_route));
+        }
+        if (internalRes.status === "fulfilled" && Array.isArray(internalRes.value?.data)) {
+          internalRes.value.data.forEach((r) => addR(r.route));
+        }
+        if (profileRes.status === "fulfilled" && Array.isArray(profileRes.value?.data) && profileRes.value.data[0]?.route) {
+          addR(profileRes.value.data[0].route);
+        }
+        const metaRoute = user.user_metadata?.route || user.user_metadata?.ruta;
+        if (metaRoute) addR(metaRoute);
+
+        const list = Array.from(routeMap.values()).sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
 
         if (!active) return;
         if (list.length > 0) {
@@ -197,18 +241,15 @@ export default function TelesalesDashboard() {
           try { await kvStorage.setItem("telesales_allowed_routes", list); } catch (e) { }
         }
 
-        // Restore selected route or default
+        // Restore selected route or default to "__ALL__" when multiple routes exist
         let saved = null;
         try { saved = await kvStorage.getItem("advisor.salesRoute"); } catch (e) { }
-        setSalesRoute(saved && list.includes(saved) ? saved : list[0] || "");
-
-        // Fallback: If no supervisor routes, try user metadata
-        if (list.length === 0 && !salesRoute) {
-          const metaRoute = user.user_metadata?.route || user.user_metadata?.ruta;
-          if (metaRoute) {
-            setAllowedRoutes([metaRoute]);
-            setSalesRoute(metaRoute);
-          }
+        if (saved === "__ALL__" && list.length > 1) {
+          setSalesRoute("__ALL__");
+        } else if (saved && list.includes(saved)) {
+          setSalesRoute(saved);
+        } else {
+          setSalesRoute(list.length > 1 ? "__ALL__" : (list[0] || ""));
         }
 
       } catch (e) {
@@ -257,22 +298,24 @@ export default function TelesalesDashboard() {
   // 3. Main Data Fetch (Sales, Comparative, Meta)
   useEffect(() => {
     if (!salesRoute) return;
+    const isAllRoutes = salesRoute === "__ALL__";
+    const activeRouteList = isAllRoutes ? allowedRoutes : [salesRoute];
+    if (activeRouteList.length === 0) return;
+
     let active = true;
     (async () => {
       const { from, to, nextFrom, isYear, isMonth } = periodRange;
 
       try {
         // A. Current Period Sales
-        const rowsRaw = await getSalesBySku({
-          salesRoute,
-          from,
-          to,
-          nextFrom,
-        });
+        const salesQueryParams = isAllRoutes
+          ? { sales_routes: activeRouteList, from, to, nextFrom }
+          : { salesRoute, from, to, nextFrom };
+
+        const rowsRaw = await getSalesBySku(salesQueryParams);
 
         // Client-side filtering fallback (in case backend ignores route param)
-        // Strict Match: "101" !== "1010"
-        const rows = rowsRaw.filter(r => isRouteMatch(r.sales_route || r.ruta, salesRoute));
+        const rows = (rowsRaw || []).filter(r => matchesAnyRoute(r.sales_route || r.ruta, activeRouteList));
 
         if (!active) return;
 
@@ -295,18 +338,33 @@ export default function TelesalesDashboard() {
         })).sort((a, b) => b.total - a.total);
         setSkuShare(shares);
 
-        // B. Meta (Goal)
-        const goalsRaw = await getGoals({ salesRoute, from, to, nextFrom });
-        const goals = goalsRaw.filter(g => isRouteMatch(g.sales_route, salesRoute));
+        // B. Meta (Goal) — soporta 1 ruta o la suma de TODAS las rutas permitidas
+        let goalsRaw = [];
+        if (isAllRoutes) {
+          goalsRaw = await getAllGoals({ from, to });
+        } else {
+          goalsRaw = await getGoals({ salesRoute, from, to, nextFrom, isMonthPicker: isMonth });
+        }
+        const matchedGoals = (goalsRaw || []).filter(g => matchesAnyRoute(g.sales_route, activeRouteList));
         let m = 0;
-        if (Array.isArray(goals) && goals.length) {
-          const latest = goals.reduce((a, b) => (new Date(a.period_date) > new Date(b.period_date) ? a : b));
-          m = Number(latest.meta) || 0;
+        if (matchedGoals.length > 0) {
+          // Tomar la meta más reciente de cada ruta y sumarlas (para 1 ruta es su meta; para __ALL__ es la suma de todas)
+          const latestByRoute = new Map();
+          matchedGoals.forEach((g) => {
+            const matchedTarget = activeRouteList.find((t) => isRouteMatch(g.sales_route, t)) || g.sales_route;
+            const key = normalizeRoute(matchedTarget);
+            const prev = latestByRoute.get(key);
+            if (!prev || new Date(g.period_date) > new Date(prev.period_date)) {
+              latestByRoute.set(key, g);
+            }
+          });
+          latestByRoute.forEach((g) => {
+            m += Number(g.meta) || 0;
+          });
         }
         setRouteMeta(m);
 
         // C. Comparative Data (Chart)
-        // Ensure we fetch prev year matches
         const { year, month } = dateFilter;
         const currYear = Number(year);
         const prevYear = currYear - 1;
@@ -314,7 +372,6 @@ export default function TelesalesDashboard() {
 
         if (isYear) {
           startCurr = `${currYear}-01-01`;
-          // Use nextFrom logic for proper exclusive upper bound
           endCurr = `${currYear + 1}-01-01`;
 
           startPrev = `${prevYear}-01-01`;
@@ -323,7 +380,6 @@ export default function TelesalesDashboard() {
         } else {
           const mm = month.padStart(2, "0");
           startCurr = `${currYear}-${mm}-01`;
-          // Calculate next month first day
           const dC = new Date(currYear, Number(month), 1);
           endCurr = `${dC.getFullYear()}-${String(dC.getMonth() + 1).padStart(2, "0")}-01`;
 
@@ -333,13 +389,20 @@ export default function TelesalesDashboard() {
           xAxisKey = "day";
         }
 
+        const currCompParams = isAllRoutes
+          ? { sales_routes: activeRouteList, from: startCurr, nextFrom: endCurr }
+          : { salesRoute, from: startCurr, nextFrom: endCurr };
+        const prevCompParams = isAllRoutes
+          ? { sales_routes: activeRouteList, from: startPrev, nextFrom: endPrev }
+          : { salesRoute, from: startPrev, nextFrom: endPrev };
+
         const [rowsCurrCompRaw, rowsPrevCompRaw] = await Promise.all([
-          getSalesBySku({ salesRoute, from: startCurr, nextFrom: endCurr }),
-          getSalesBySku({ salesRoute, from: startPrev, nextFrom: endPrev })
+          getSalesBySku(currCompParams),
+          getSalesBySku(prevCompParams)
         ]);
 
         // Client-side filtering fallback for comparative data
-        const filterRows = (toFilter) => toFilter.filter(r => isRouteMatch(r.sales_route || r.ruta, salesRoute));
+        const filterRows = (toFilter) => (toFilter || []).filter(r => matchesAnyRoute(r.sales_route || r.ruta, activeRouteList));
 
         const rowsCurrComp = filterRows(rowsCurrCompRaw);
         const rowsPrevComp = filterRows(rowsPrevCompRaw);
@@ -415,7 +478,7 @@ export default function TelesalesDashboard() {
       }
     })();
     return () => { active = false; };
-  }, [salesRoute, periodRange, dateFilter, skuImagesMap, skuDescMap]);
+  }, [salesRoute, allowedRoutes, periodRange, dateFilter, skuImagesMap, skuDescMap]);
 
 
   // 4. Calls Data Fetching
@@ -467,19 +530,24 @@ export default function TelesalesDashboard() {
         };
 
         // Today's Calls
-        const todayRows = await fetchAll(
-          supabase.from('telesales_calls')
-            .select('*')
-            .eq(routeCol, salesRoute)
-            .gte(timeCol, todayStart)
-            .lte(timeCol, todayEnd)
-        );
+        const isAllCalls = salesRoute === '__ALL__';
+        let todayQuery = supabase.from('telesales_calls')
+          .select('*')
+          .gte(timeCol, todayStart)
+          .lte(timeCol, todayEnd);
+        todayQuery = isAllCalls && allowedRoutes.length > 0
+          ? todayQuery.in(routeCol, allowedRoutes)
+          : todayQuery.eq(routeCol, salesRoute);
+        const todayRows = await fetchAll(todayQuery);
 
         // Period Calls
+        let monthQuery = supabase.from('telesales_calls')
+          .select('*');
+        monthQuery = isAllCalls && allowedRoutes.length > 0
+          ? monthQuery.in(routeCol, allowedRoutes)
+          : monthQuery.eq(routeCol, salesRoute);
         const monthRows = await fetchAll(
-          supabase.from('telesales_calls')
-            .select('*')
-            .eq(routeCol, salesRoute)
+          monthQuery
             .gte(timeCol, `${from}T00:00:00`)
             .lte(timeCol, `${to}T23:59:59`)
         );
@@ -565,11 +633,14 @@ export default function TelesalesDashboard() {
             {/* Route Selector */}
             {allowedRoutes.length > 0 && (
               <Select value={salesRoute} onValueChange={setSalesRoute}>
-                <SelectTrigger className="w-[160px] border-white/10 bg-white/5 text-white">
+                <SelectTrigger className="w-[190px] border-white/10 bg-white/5 text-white">
                   <SelectValue placeholder="Ruta" />
                 </SelectTrigger>
                 <SelectContent>
-                  {allowedRoutes.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  {allowedRoutes.length > 1 && (
+                    <SelectItem value="__ALL__">Todas mis rutas ({allowedRoutes.length})</SelectItem>
+                  )}
+                  {allowedRoutes.map(r => <SelectItem key={r} value={r}>Ruta {r}</SelectItem>)}
                 </SelectContent>
               </Select>
             )}

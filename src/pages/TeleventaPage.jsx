@@ -311,15 +311,60 @@ export default function TeleventaPage() {
 
         let fetchedClients = [];
         try {
-          const filters = {};
-          if (targetRoutes.length === 1) {
-            // 'sales_route' singular en clients-read.php busca (sales_route = ? OR internal_route = ?)
-            filters.sales_route = targetRoutes[0];
-          }
-          // Si hay múltiples rutas (o ninguna), traemos hasta 3500 clientes y filtramos en cliente por sales_route O internal_route
-          const res = await getClientsPaged({ page: 1, pageSize: 3500, filters });
-          fetchedClients = res.data || [];
+          const seenClientKeys = new Set();
+          const pushUnique = (rows) => {
+            if (!Array.isArray(rows)) return;
+            for (const c of rows) {
+              if (!c) continue;
+              const key = String(c.id || c.client_code || '');
+              if (key && seenClientKeys.has(key)) continue;
+              if (key) seenClientKeys.add(key);
+              fetchedClients.push(c);
+            }
+          };
 
+          const fetchAllPagesForFilter = async (filtersObj) => {
+            const pageSize = 1000;
+            let page = 1;
+            while (page <= 30) {
+              const res = await getClientsPaged({ page, pageSize, filters: filtersObj });
+              const rows = Array.isArray(res?.data) ? res.data : [];
+              pushUnique(rows);
+              if (rows.length < pageSize) break;
+              page += 1;
+            }
+          };
+
+          if (resolvedRoutesDisplay.length === 1) {
+            // 'sales_route' singular en clients-read.php busca (sales_route = ? OR internal_route = ?)
+            await fetchAllPagesForFilter({ sales_route: resolvedRoutesDisplay[0] });
+          } else if (resolvedRoutesDisplay.length > 1) {
+            // Consultar por lotes de 12 rutas con sales_routes + internal_routes paginando TODAS las páginas
+            // (evita el límite anterior de 3,500 filas que dejaba fuera clientes como 103285)
+            const chunkSize = 10;
+            const expandedRoutesSet = new Set();
+            resolvedRoutesDisplay.forEach((r) => {
+              expandedRoutesSet.add(r);
+              if (/^\d+$/.test(r)) {
+                const n = String(parseInt(r, 10));
+                expandedRoutesSet.add(n);
+                if (n.length === 1) expandedRoutesSet.add('0' + n);
+              }
+            });
+            const expandedRoutes = Array.from(expandedRoutesSet);
+            const chunks = [];
+            for (let i = 0; i < expandedRoutes.length; i += chunkSize) {
+              chunks.push(expandedRoutes.slice(i, i + chunkSize));
+            }
+            for (const chunk of chunks) {
+              await fetchAllPagesForFilter({
+                sales_routes: chunk,
+                internal_routes: chunk
+              });
+            }
+          } else {
+            await fetchAllPagesForFilter({});
+          }
         } catch (err) {
           console.error('televenta: error al cargar clientes (MySQL)', err);
           fetchedClients = [];
@@ -749,27 +794,39 @@ export default function TeleventaPage() {
   }, [user?.id, todayStr]);
 
   useEffect(() => {
-    if (!effectiveRoute || !currentMonthRange.from || !currentMonthRange.to) {
+    const routesForMeta = selectedRouteFilter
+      ? [selectedRouteFilter]
+      : (allowedRoutesList.length > 0 ? allowedRoutesList : splitMultiValue(effectiveRoute));
+
+    if (!routesForMeta.length || !currentMonthRange.from || !currentMonthRange.to) {
       setRouteMeta(0);
       return;
     }
     let active = true;
     (async () => {
       try {
-        let q = supabase
+        const { data, error } = await supabase
           .from('metas_venta')
-          .select('meta, period_date')
-          .eq('sales_route', effectiveRoute)
+          .select('sales_route, meta, period_date')
           .gte('period_date', currentMonthRange.from)
           .lt('period_date', currentMonthRange.to);
-        const { data, error } = await q;
         if (error) throw error;
         let meta = 0;
         if (Array.isArray(data) && data.length) {
-          const latest = data.reduce((a, b) =>
-            new Date(a.period_date) > new Date(b.period_date) ? a : b
-          );
-          meta = Number(latest.meta) || 0;
+          // Filtrar por las rutas permitidas (o la ruta seleccionada) y sumar la meta más reciente de cada ruta
+          const latestByRoute = new Map();
+          data.forEach((row) => {
+            const matchedTarget = routesForMeta.find((t) => isRouteMatchStrict(row.sales_route, t));
+            if (!matchedTarget) return;
+            const key = normalizeRouteStrict(matchedTarget);
+            const prev = latestByRoute.get(key);
+            if (!prev || new Date(row.period_date) > new Date(prev.period_date)) {
+              latestByRoute.set(key, row);
+            }
+          });
+          latestByRoute.forEach((row) => {
+            meta += Number(row.meta) || 0;
+          });
         }
         if (active) setRouteMeta(meta);
       } catch (err) {
@@ -780,7 +837,7 @@ export default function TeleventaPage() {
     return () => {
       active = false;
     };
-  }, [effectiveRoute, currentMonthRange]);
+  }, [effectiveRoute, allowedRoutesList, selectedRouteFilter, currentMonthRange]);
 
   const {
     statusByClientId,

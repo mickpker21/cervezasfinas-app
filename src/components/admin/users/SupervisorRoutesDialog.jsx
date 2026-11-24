@@ -212,8 +212,12 @@ export default function SupervisorRoutesDialog({ isOpen, onClose, supervisor: us
           allZonas = uniqClean((zrRows || []).map((r) => r.zona));
           
           // Construir mapa estructurado
+          const existingZRKeys = new Set();
           zrRows.forEach(row => {
             if (row.zona && row.ruta) {
+              const zClean = String(row.zona).trim().toUpperCase();
+              const rClean = String(row.ruta).trim().toUpperCase();
+              existingZRKeys.add(`${zClean}||${rClean}`);
               if (!mapZonaRutas[row.zona]) {
                 mapZonaRutas[row.zona] = { ventas: [], reparto: [], conquista: [] };
               }
@@ -225,18 +229,99 @@ export default function SupervisorRoutesDialog({ isOpen, onClose, supervisor: us
               }
             }
           });
+
+          // Auto-descubrir rutas nuevas desde ventas recientes en MySQL (ej. PALMARITO 400101..400202)
+          // y registrarlas automáticamente en zonas_rutas + mapa de zonas (sin requerir cambios en PHP)
+          const autoDiscoveredSalesRoutes = [];
+          try {
+            const now = new Date();
+            const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+            const fromDate = `${ym}-01`;
+            const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+            const toDate = `${ym}-${String(lastDay).padStart(2, "0")}`;
+
+            const zonasToProbe = uniqClean([
+              ...allZonas,
+              "PALMARITO",
+              "SERDAN",
+              "IZUCAR",
+              "OAXACA",
+              "GPE-CHILCHOTLA"
+            ]);
+
+            const probeResults = await Promise.allSettled(
+              zonasToProbe.map(async (zName) => {
+                const resp = await fetch(
+                  `https://cervezasfinas.com/api/ventas-por-sku-read.php?zona=${encodeURIComponent(zName)}&from=${fromDate}&to=${toDate}&aggregate=true`
+                );
+                if (!resp.ok) return { zName, routes: [] };
+                const json = await resp.json();
+                const rows = Array.isArray(json?.rows) ? json.rows : [];
+                const found = new Set();
+                rows.forEach((r) => {
+                  const rRaw = String(r.ruta || r.ruta_resuelta || "").trim().toUpperCase();
+                  if (rRaw) found.add(rRaw);
+                });
+                return { zName, routes: Array.from(found) };
+              })
+            );
+
+            const missingInCatalog = [];
+            const seenNew = new Set();
+
+            probeResults.forEach((res) => {
+              if (res.status !== "fulfilled" || !res.value?.routes?.length) return;
+              const { zName, routes: zRoutes } = res.value;
+              const existingZonaKey = allZonas.find((z) => z.toUpperCase() === zName.toUpperCase()) || zName;
+              if (!allZonas.includes(existingZonaKey)) {
+                allZonas = uniqClean([...allZonas, existingZonaKey]);
+              }
+              if (!mapZonaRutas[existingZonaKey]) {
+                mapZonaRutas[existingZonaKey] = { ventas: [], reparto: [], conquista: [] };
+              }
+
+              zRoutes.forEach((rRaw) => {
+                autoDiscoveredSalesRoutes.push(rRaw);
+                if (!mapZonaRutas[existingZonaKey].ventas.includes(rRaw)) {
+                  mapZonaRutas[existingZonaKey].ventas.push(rRaw);
+                }
+                const pairKey = `${existingZonaKey.toUpperCase()}||${rRaw}`;
+                if (!existingZRKeys.has(pairKey) && !seenNew.has(pairKey)) {
+                  seenNew.add(pairKey);
+                  missingInCatalog.push({ zona: existingZonaKey, ruta: rRaw, tipo_ruta: 'ventas' });
+                }
+              });
+            });
+
+            // Guardar en segundo plano las rutas nuevas descubiertas en zonas_rutas
+            if (missingInCatalog.length > 0) {
+              supabase
+                .from("zonas_rutas")
+                .upsert(missingInCatalog, { onConflict: "zona,ruta", ignoreDuplicates: true })
+                .then(() => {})
+                .catch(() => {});
+            }
+          } catch (autoErr) {
+            console.warn("No se pudieron auto-descubrir rutas desde ventas MySQL:", autoErr);
+          }
+
           setZonasRutasMap(mapZonaRutas);
+
+          // Fetch routes from local DB (via Repository) + merge auto-discovered live sales routes
+          const { getAvailableRoutes } = await import('../../../repositories/routeRepository');
+          const available = await getAvailableRoutes();
+
+          setAvailableZonas(allZonas);
+          setAvailableRoutes(uniqClean([...(available.internal || []), ...autoDiscoveredSalesRoutes]));
+          setAvailableSalesRoutes(uniqClean([...(available.sales || []), ...autoDiscoveredSalesRoutes]));
         } catch (e) {
           console.warn("Could not load zonas_rutas from Supabase", e);
+          const { getAvailableRoutes } = await import('../../../repositories/routeRepository');
+          const available = await getAvailableRoutes();
+          setAvailableZonas(allZonas);
+          setAvailableRoutes(uniqClean(available.internal));
+          setAvailableSalesRoutes(uniqClean(available.sales));
         }
-
-        // Fetch routes from local DB (via Repository)
-        const { getAvailableRoutes } = await import('../../../repositories/routeRepository');
-        const available = await getAvailableRoutes();
-
-        setAvailableZonas(allZonas);
-        setAvailableRoutes(uniqClean(available.internal));
-        setAvailableSalesRoutes(uniqClean(available.sales));
       } catch (error) {
         console.error(error);
         toast({
