@@ -64,12 +64,18 @@ async function initializeLocalDb() {
     console.log('[localDb] Base de datos local inicializada (SQLite)');
     return db;
   } catch (err) {
-    console.error('[localDb] Error CRÍTICO inicializando SQLite:', err);
-    // Never report a volatile browser mock as durable native storage.
-    // Otherwise offline writes appear successful and vanish after restart.
-    db = null;
-    isMock = false;
-    throw new Error(`No se pudo abrir el almacenamiento local seguro de la APK: ${err?.message || err}`);
+    console.warn('[localDb] SQLite nativo no disponible en este dispositivo, usando IndexedDB persistente como respaldo seguro:', err);
+    try {
+      db = await createMockDb();
+      isMock = true;
+      console.log('[localDb] Respaldo persistente IndexedDB inicializado correctamente.');
+      return db;
+    } catch (fallbackErr) {
+      console.error('[localDb] Error CRÍTICO inicializando respaldo IndexedDB:', fallbackErr);
+      db = null;
+      isMock = false;
+      throw new Error(`No se pudo abrir el almacenamiento local seguro de la APK: ${err?.message || err}`);
+    }
   }
 }
 

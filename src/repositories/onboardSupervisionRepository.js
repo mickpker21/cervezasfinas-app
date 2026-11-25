@@ -29,6 +29,23 @@ async function tryImmediateSync(supervision = null, visit = null) {
 
 export async function startOnboardSupervision({ supervisor_id, supervisor_name, route_name, vendedor_id, vendedor_name, checklist_data }) {
     const db = await getDb();
+
+    // Evitar crear supervisiones duplicadas en estado 'draft' para el mismo supervisor:
+    // si ya existe un borrador abierto hoy en la misma ruta, reutilizarlo; si hay borradores vacíos previos, cerrarlos.
+    try {
+        const existingActive = await getActiveSupervision(supervisor_id);
+        if (existingActive && existingActive.id) {
+            const sameRoute = String(existingActive.route_name || '').trim().toLowerCase() === String(route_name || '').trim().toLowerCase();
+            const sameDay = String(existingActive.start_at || '').slice(0, 10) === new Date().toISOString().slice(0, 10);
+            if (sameRoute && sameDay) {
+                console.log('[onboardSupervisionRepository] Reutilizando borrador activo del mismo día/ruta:', existingActive.id);
+                return existingActive.id;
+            }
+        }
+    } catch (e) {
+        console.warn('[onboardSupervisionRepository] No se pudo verificar borrador previo:', e);
+    }
+
     const id = uuidv4();
     const start_at = new Date().toISOString();
 
@@ -464,8 +481,25 @@ export async function finishOnboardSupervision(supervision_id, closingNotes = ''
         created_at: end_at
     });
 
-    // 3. Try Immediate Sync
-    tryImmediateSync(updatePayload);
+    // 3. Try Immediate Sync (AWAIT para garantizar que MySQL quede en 'completed' antes de navegar al Dashboard)
+    const syncedOk = await tryImmediateSync(updatePayload);
+    if (syncedOk) {
+        try {
+            if (isMockDb()) {
+                const allSessions = db._storage.get('supervisor_onboard_supervisions') || [];
+                const idx = allSessions.findIndex(s => s.id === supervision_id);
+                if (idx >= 0) {
+                    allSessions[idx] = { ...allSessions[idx], synced: 1 };
+                    db._storage.set('supervisor_onboard_supervisions', [...allSessions]);
+                }
+            } else {
+                await db.run(
+                    "UPDATE supervisor_onboard_supervisions SET synced = 1 WHERE id = ?",
+                    [supervision_id]
+                );
+            }
+        } catch {}
+    }
 
     return finalScore;
 }
@@ -503,6 +537,12 @@ async function saveOnboardDataToLocal(supervisions) {
 
         supervisions.forEach(s => {
             const { visits, ...header } = s;
+            const localExisting = sessionsMap.get(header.id);
+            // PROTECCIÓN ANTI-REAPERTURA: jamás sobrescribir una supervisión ya cerrada ('completed')
+            // con un estado 'draft' desactualizado que venga del servidor.
+            if (localExisting && localExisting.status === 'completed' && header.status !== 'completed') {
+                return;
+            }
             sessionsMap.set(header.id, { ...header, synced: 1 });
             if (visits) {
                 visits.forEach(v => visitsMap.set(v.id, { ...v, synced: 1 }));
@@ -514,11 +554,21 @@ async function saveOnboardDataToLocal(supervisions) {
         return;
     }
 
+    // Obtener IDs ya cerrados localmente para no reabrirlos con un 'draft' viejo del servidor
+    const locallyCompletedIds = new Set();
+    try {
+        const compRes = await db.query("SELECT id FROM supervisor_onboard_supervisions WHERE status = 'completed'");
+        (compRes.values || []).forEach(r => { if (r?.id) locallyCompletedIds.add(r.id); });
+    } catch {}
+
     // SQLite Transaction
     await db.execute('BEGIN TRANSACTION');
     try {
         for (const s of supervisions) {
             const { visits, ...header } = s;
+            if (locallyCompletedIds.has(header.id) && header.status !== 'completed') {
+                continue;
+            }
             
             // Upsert Header
             await db.run(
