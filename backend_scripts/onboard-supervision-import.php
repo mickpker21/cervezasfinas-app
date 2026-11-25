@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('America/Mexico_City');
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: POST");
@@ -6,6 +7,24 @@ header("Access-Control-Max-Age: 3600");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
 include_once 'db_config.php';
+
+function normalizeMexicoDateTime($val, $defaultNow = false) {
+    if ($val === null || trim((string)$val) === '') {
+        return $defaultNow ? date('Y-m-d H:i:s') : null;
+    }
+    $str = trim((string)$val);
+    // Si ya viene en formato MySQL local de México (sin Z ni offset), conservarlo exacto
+    if (preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/', $str)) {
+        return strlen($str) === 16 ? str_replace('T', ' ', $str) . ':00' : str_replace('T', ' ', $str);
+    }
+    try {
+        $dt = new DateTime($str);
+        $dt->setTimezone(new DateTimeZone('America/Mexico_City'));
+        return $dt->format('Y-m-d H:i:s');
+    } catch (Exception $e) {
+        return $defaultNow ? date('Y-m-d H:i:s') : $str;
+    }
+}
 
 $data = json_decode(file_get_contents("php://input"));
 
@@ -45,8 +64,8 @@ try {
                     $s->route_name,
                     isset($s->vendedor_id) ? $s->vendedor_id : null,
                     $s->vendedor_name,
-                    $s->start_at,
-                    isset($s->end_at) ? $s->end_at : null,
+                    normalizeMexicoDateTime(isset($s->start_at) ? $s->start_at : null, true),
+                    normalizeMexicoDateTime(isset($s->end_at) ? $s->end_at : null, false),
                     isset($s->checklist_data) ? (is_string($s->checklist_data) ? $s->checklist_data : json_encode($s->checklist_data)) : null,
                     isset($s->status) ? $s->status : 'draft',
                     isset($s->score) ? $s->score : 0
@@ -78,7 +97,7 @@ try {
                     $v->client_code,
                     isset($v->survey_data) ? (is_string($v->survey_data) ? $v->survey_data : json_encode($v->survey_data)) : null,
                     isset($v->evaluation_pdv_id) ? $v->evaluation_pdv_id : null,
-                    isset($v->created_at) ? $v->created_at : date('Y-m-d H:i:s')
+                    normalizeMexicoDateTime(isset($v->created_at) ? $v->created_at : null, true)
                 ]);
                 $processed_visits++;
             } catch (Exception $e) {

@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Loader2, Camera, MapPin, XCircle } from 'lucide-react';
 import { getCurrentPositionSafe } from '@/lib/geolocation';
 import { DirectCameraField } from '@/components/common/DirectCameraModal';
+import { getTodayMexico, getMexicoTimeString, getNowMexico } from '@/lib/dateUtils';
 
 const NO_SALE_REASONS = [
     "Cerrado",
@@ -66,14 +67,14 @@ const NoSaleModal = ({ isOpen, onClose, client, onSuccess }) => {
                 client_id: client?.id,
                 cliente_nombre: client?.business_name || client?.name,
                 user_id: user.id,
-                fecha: new Date().toISOString().slice(0, 10),
-                hora: new Date().toLocaleTimeString(),
+                fecha: getTodayMexico(),
+                hora: getMexicoTimeString(),
                 motivo: `No Venta - ${reason}`,
                 notes: notes,
                 photo_fachada: photoData,
                 lat: coords?.lat,
                 lng: coords?.lng,
-                created_at: new Date().toISOString()
+                created_at: getNowMexico()
             };
 
             await createVisit(visitData);

@@ -1,7 +1,7 @@
 import { getDb, isMockDb } from '@/lib/localDb';
 import { isOnline, withTimeout } from '@/lib/network';
 // import { supabase } from '@/supabaseClient';
-import { getTodayMexico } from '@/lib/dateUtils'; // Usage replaced by MySQL Libs for writes, but might check for Read?
+import { getTodayMexico, getNowMexico, getMexicoTimeString } from '@/lib/dateUtils';
 // Actually we use Supabase for Read fallback in some cases? 
 // No, we use Supabase for Online Read in the OLD code.
 // The NEW code uses mysqlVisits.js for Read presumably?
@@ -254,13 +254,15 @@ export async function createVisit(visit) {
     throw new Error('La foto de fachada es obligatoria para registrar la visita.');
   }
   const online = await isOnline();
-  const now = new Date().toISOString();
+  const now = getNowMexico();
 
   // Asegurar ID
   if (!visit.id) visit.id = crypto.randomUUID();
 
   const row = {
     ...visit,
+    fecha: visit.fecha || getTodayMexico(),
+    hora: visit.hora || getMexicoTimeString(),
     created_at: visit.created_at || now,
   };
 

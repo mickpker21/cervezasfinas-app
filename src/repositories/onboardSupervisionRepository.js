@@ -6,6 +6,7 @@ import { addPendingOperation } from '@/sync/syncService';
 import { createOrder } from './ordersRepository';
 import { updateClient } from './clientsRepository';
 import { loadEvaluationConfig, defaultEvaluationConfig } from '@/lib/evaluationConfig';
+import { getNowMexico, getTodayMexico, toMexicoDateString } from '@/lib/dateUtils';
 
 /**
  * Helper to attempt immediate cloud sync if online
@@ -31,14 +32,14 @@ export async function startOnboardSupervision({ supervisor_id, supervisor_name, 
     const db = await getDb();
 
     // Evitar crear supervisiones duplicadas en estado 'draft' para el mismo supervisor:
-    // si ya existe un borrador abierto hoy en la misma ruta, reutilizarlo; si hay borradores vacíos previos, cerrarlos.
+    // getActiveSupervision() ya cierra automáticamente borradores de días anteriores (corte 00:00 México).
     try {
         const existingActive = await getActiveSupervision(supervisor_id);
         if (existingActive && existingActive.id) {
             const sameRoute = String(existingActive.route_name || '').trim().toLowerCase() === String(route_name || '').trim().toLowerCase();
-            const sameDay = String(existingActive.start_at || '').slice(0, 10) === new Date().toISOString().slice(0, 10);
+            const sameDay = toMexicoDateString(existingActive.start_at) === getTodayMexico();
             if (sameRoute && sameDay) {
-                console.log('[onboardSupervisionRepository] Reutilizando borrador activo del mismo día/ruta:', existingActive.id);
+                console.log('[onboardSupervisionRepository] Reutilizando borrador activo del mismo día/ruta (México):', existingActive.id);
                 return existingActive.id;
             }
         }
@@ -47,7 +48,7 @@ export async function startOnboardSupervision({ supervisor_id, supervisor_name, 
     }
 
     const id = uuidv4();
-    const start_at = new Date().toISOString();
+    const start_at = getNowMexico();
 
     if (isMockDb()) {
         const current = db._storage.get('supervisor_onboard_supervisions') || [];
@@ -100,7 +101,7 @@ export async function startOnboardSupervision({ supervisor_id, supervisor_name, 
 export async function addOnboardVisit({ supervision_id, client_id, client_name, client_code, survey_data, evaluation_pdv_id }) {
     const db = await getDb();
     let id = uuidv4();
-    const created_at = new Date().toISOString();
+    const created_at = getNowMexico();
 
     if (isMockDb()) {
         const current = db._storage.get('supervisor_onboard_visits') || [];
@@ -231,19 +232,65 @@ async function registerFacadeAssignment({ client_id, client_name, facade_type, s
     await createOrder(order, items);
 }
 
+/**
+ * Cierra automáticamente cualquier supervisión en estado 'draft' iniciada en un día
+ * anterior al día actual en hora de México (corte 00:00 America/Mexico_City).
+ */
+export async function autoCloseStaleDraftSupervisions(supervisor_id) {
+    try {
+        const db = await getDb();
+        const todayMx = getTodayMexico();
+        let drafts = [];
+
+        if (isMockDb()) {
+            const all = db._storage.get('supervisor_onboard_supervisions') || [];
+            drafts = all.filter(s => (!supervisor_id || supervisor_id === 'all' || s.supervisor_id === supervisor_id) && s.status === 'draft');
+        } else {
+            const res = (!supervisor_id || supervisor_id === 'all')
+                ? await db.query("SELECT * FROM supervisor_onboard_supervisions WHERE status = 'draft'")
+                : await db.query("SELECT * FROM supervisor_onboard_supervisions WHERE supervisor_id = ? AND status = 'draft'", [supervisor_id]);
+            drafts = res.values || [];
+        }
+
+        let closedCount = 0;
+        for (const d of drafts) {
+            const draftDayMx = toMexicoDateString(d.start_at);
+            if (draftDayMx && draftDayMx < todayMx) {
+                console.log(`[onboardSupervisionRepository] Auto-cerrando borrador vencido (${draftDayMx} < ${todayMx} MX):`, d.id);
+                await finishOnboardSupervision(
+                    d.id,
+                    'Cierre automático por cambio de día (hora México)',
+                    `${draftDayMx} 23:59:59`
+                );
+                closedCount++;
+            }
+        }
+        return closedCount;
+    } catch (e) {
+        console.warn('[onboardSupervisionRepository] Error en autoCloseStaleDraftSupervisions:', e);
+        return 0;
+    }
+}
+
 export async function getActiveSupervision(supervisor_id) {
+    // Corte diario a las 00:00 hora México: cerrar automáticamente borradores de días anteriores
+    await autoCloseStaleDraftSupervisions(supervisor_id);
+
     const db = await getDb();
+    const todayMx = getTodayMexico();
     if (isMockDb()) {
         const all = db._storage.get('supervisor_onboard_supervisions') || [];
-        return all.filter(s => s.supervisor_id === supervisor_id && s.status === 'draft')
-                  .sort((a, b) => new Date(b.start_at) - new Date(a.start_at))[0] || null;
+        return all
+            .filter(s => s.supervisor_id === supervisor_id && s.status === 'draft' && toMexicoDateString(s.start_at) === todayMx)
+            .sort((a, b) => String(b.start_at || '').localeCompare(String(a.start_at || '')))[0] || null;
     }
 
     const res = await db.query(
-        "SELECT * FROM supervisor_onboard_supervisions WHERE supervisor_id = ? AND status = 'draft' ORDER BY start_at DESC LIMIT 1",
+        "SELECT * FROM supervisor_onboard_supervisions WHERE supervisor_id = ? AND status = 'draft' ORDER BY start_at DESC",
         [supervisor_id]
     );
-    return res.values?.[0] || null;
+    const rows = res.values || [];
+    return rows.find(s => toMexicoDateString(s.start_at) === todayMx) || null;
 }
 
 export async function getSupervisionData(supervision_id) {
@@ -333,7 +380,7 @@ export async function getAllSupervisions(supervisor_id) {
     }));
 }
 
-export async function finishOnboardSupervision(supervision_id, closingNotes = '') {
+export async function finishOnboardSupervision(supervision_id, closingNotes = '', customEndAt = null) {
     const data = await getSupervisionData(supervision_id);
     if (!data) return 0;
 
@@ -430,7 +477,7 @@ export async function finishOnboardSupervision(supervision_id, closingNotes = ''
     }
 
     const finalScore = Math.min(100, Math.round((checkScore + purchaseScore + stepsScore + executionScore) * 10) / 10);
-    const end_at = new Date().toISOString();
+    const end_at = customEndAt || getNowMexico();
     const enrichedChecklist = {
         ...checklist,
         _closing_notes: closingNotes || checklist._closing_notes || '',

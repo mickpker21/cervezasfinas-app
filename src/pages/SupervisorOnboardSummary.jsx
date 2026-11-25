@@ -102,7 +102,7 @@ export default function SupervisorOnboardSummary() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `Supervision_${selectedSession.route_name.replace(/\s+/g, '_')}_${selectedSession.start_at.split('T')[0]}.csv`);
+    link.setAttribute("download", `Supervision_${selectedSession.route_name.replace(/\s+/g, '_')}_${String(selectedSession.start_at || '').slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -154,8 +154,16 @@ export default function SupervisorOnboardSummary() {
   const formatDate = (dateStr) => {
     if (!dateStr) return '---';
     try {
-      const d = new Date(dateStr);
-      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const raw = String(dateStr).trim();
+      // Si ya viene en formato MySQL DATETIME local México (YYYY-MM-DD HH:mm:ss sin Z/offset)
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) {
+        const d = new Date(raw.replace(' ', 'T'));
+        if (!Number.isNaN(d.getTime())) {
+          return d.toLocaleDateString('es-MX') + ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+        }
+      }
+      const d = new Date(raw);
+      return d.toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' }) + ' ' + d.toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit' });
     } catch (e) { return dateStr; }
   };
 

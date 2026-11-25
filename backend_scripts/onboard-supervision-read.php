@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('America/Mexico_City');
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 
@@ -6,6 +7,23 @@ include_once 'db_config.php';
 
 try {
     $pdo = getDBConnection();
+
+    // Auto-cierre diario a corte 00:00 hora México:
+    // cualquier borrador ('draft') de un día anterior se cierra automáticamente como 'completed'
+    try {
+        $todayMx = date('Y-m-d');
+        $autoCloseStmt = $pdo->prepare("
+            UPDATE supervisor_onboard_supervisions
+            SET status = 'completed',
+                end_at = COALESCE(end_at, CONCAT(LEFT(start_at, 10), ' 23:59:59'))
+            WHERE status = 'draft'
+              AND start_at IS NOT NULL
+              AND LEFT(start_at, 10) < ?
+        ");
+        $autoCloseStmt->execute([$todayMx]);
+    } catch (Exception $autoCloseEx) {
+        // No bloquear lectura si falla el auto-cierre
+    }
 
     $supervisor_id = isset($_GET['supervisor_id']) && $_GET['supervisor_id'] !== 'all' ? $_GET['supervisor_id'] : null;
     $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 100;
