@@ -123,6 +123,27 @@ export const PRODUCT_IMAGES = [
   "CF-RET-940.png"
 ];
 
+import { Capacitor } from '@capacitor/core';
+
+const PUBLIC_WEB_ORIGIN = 'https://cervezasfinas.com';
+
+const isNativeApp = () => {
+    try {
+        return typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform();
+    } catch {
+        return false;
+    }
+};
+
+export const resolvePublicAssetUrl = (path) => {
+    if (!path) return '/placeholder.svg';
+    const raw = String(path).trim();
+    if (!raw) return '/placeholder.svg';
+    if (/^(https?:|data:|blob:)/i.test(raw)) return raw;
+    const normalized = raw.startsWith('/') ? raw : `/${raw}`;
+    return isNativeApp() ? `${PUBLIC_WEB_ORIGIN}${normalized}` : normalized;
+};
+
 export const getProductImageUrl = (sku) => {
     if (!sku) return '/placeholder.svg';
     const s = String(sku).trim().toLowerCase();
@@ -134,7 +155,9 @@ export const getProductImageUrl = (sku) => {
     });
 
     if (file) {
-        return `/portafolio/${file}`;
+        return isNativeApp()
+            ? `${PUBLIC_WEB_ORIGIN}/portafolio/${encodeURIComponent(file)}`
+            : `/portafolio/${file}`;
     }
 
     // Safe fallback to placeholder SVG to avoid 404/422 server errors for unlisted SKUs

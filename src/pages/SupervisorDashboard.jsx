@@ -14,7 +14,7 @@ import { supabase } from "@/supabaseClient";
 import { useSupabaseAuth } from "@/contexts/SupabaseAuthContext";
 import { getSalesBySku } from '@/repositories/salesRepository';
 import { getSkuDescriptions, getSkuImages, getChannels, getAllowedRoutes, getAllowedZonas, getSkuEquivalencias } from '@/repositories/metadataRepository';
-import { getProductImageUrl } from '@/lib/imageCatalog';
+import { getProductImageUrl, resolvePublicAssetUrl } from '@/lib/imageCatalog';
 import SkuEquivalenciasDialog from '@/components/SkuEquivalenciasDialog';
 import ComparativeSalesChart from '@/components/ComparativeSalesChart';
 
@@ -61,13 +61,13 @@ const strip = (s) => (s || "").toString().trim();
 const norm = (s) => strip(s).toUpperCase();
 const getChannelImage = (canal) => {
   const c = (canal || "").toString().trim().toUpperCase();
-  if (c.includes("BRONCE 7%")) return "/bronce.png";
-  if (c.includes("PLATA8%")) return "/plata.png";
-  if (c.includes("ORO 10%")) return "/oro.png";
-  if (c.includes("PLATINO 12 %")) return "/platino.png";
-  if (c.includes("TITANIO14%")) return "/titanio.png";
-  if (c.includes("TITANIO 17%")) return "/titanio2.png";
-  return `/${encodeURIComponent(c)}.png`;
+  if (c.includes("BRONCE 7%")) return resolvePublicAssetUrl("/bronce.png");
+  if (c.includes("PLATA8%")) return resolvePublicAssetUrl("/plata.png");
+  if (c.includes("ORO 10%")) return resolvePublicAssetUrl("/oro.png");
+  if (c.includes("PLATINO 12 %")) return resolvePublicAssetUrl("/platino.png");
+  if (c.includes("TITANIO14%")) return resolvePublicAssetUrl("/titanio.png");
+  if (c.includes("TITANIO 17%")) return resolvePublicAssetUrl("/titanio2.png");
+  return resolvePublicAssetUrl(`/${encodeURIComponent(c)}.png`);
 };
 const clientCodeKey = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
 const normalizeClientCoords = (c) => {

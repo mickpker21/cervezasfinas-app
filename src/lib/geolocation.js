@@ -57,6 +57,74 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+// Cache en memoria + sessionStorage de la última ubicación válida para respuestas instantáneas
+const LAST_POS_STORAGE_KEY = 'cf_last_known_gps_v1';
+const LAST_POS_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos
+let memoryLastPosition = null;
+
+function saveLastKnownPosition(pos) {
+  if (!pos?.coords) return;
+  const lat = Number(pos.coords.latitude);
+  const lng = Number(pos.coords.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return;
+  const snapshot = {
+    coords: {
+      latitude: lat,
+      longitude: lng,
+      accuracy: Number(pos.coords.accuracy) || 50,
+    },
+    timestamp: Date.now(),
+  };
+  memoryLastPosition = snapshot;
+  try {
+    sessionStorage.setItem(LAST_POS_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {}
+}
+
+function getLastKnownPosition(maxAgeMs = LAST_POS_MAX_AGE_MS) {
+  const now = Date.now();
+  if (memoryLastPosition && now - memoryLastPosition.timestamp <= maxAgeMs) {
+    return memoryLastPosition;
+  }
+  try {
+    const raw = sessionStorage.getItem(LAST_POS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.coords && now - (parsed.timestamp || 0) <= maxAgeMs) {
+        memoryLastPosition = parsed;
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Verifica y solicita permisos de ubicación en APK nativa sin consumir el timeout del GPS.
+ */
+async function ensureNativeLocationPermission() {
+  if (!Capacitor.isNativePlatform()) return true;
+  try {
+    const permStatus = await Geolocation.checkPermissions();
+    if (permStatus.location === 'granted' || permStatus.coarseLocation === 'granted') {
+      return true;
+    }
+    const reqStatus = await Geolocation.requestPermissions();
+    return reqStatus.location === 'granted' || reqStatus.coarseLocation === 'granted';
+  } catch (e) {
+    // Algunos dispositivos lanzan excepción en checkPermissions pero permiten getCurrentPosition
+    return true;
+  }
+}
+
+/**
+ * Pre-calienta el receptor GPS en segundo plano (sin bloquear UI)
+ * para que al guardar visita/evaluación la coordenada ya esté lista.
+ */
+export function warmUpGeolocation() {
+  getOptionalPositionFast(6000).catch(() => {});
+}
+
 /**
  * Obtiene la ubicación actual de forma segura.
  * - En APK: usa Capacitor Geolocation con verificación previa de permisos
@@ -68,11 +136,16 @@ export async function getCurrentPositionSafe(options = {}) {
   // Configuración predeterminada robusta para trabajo offline / campo
   const defaultOpts = {
     enableHighAccuracy: true,
-    timeout: 25000,           // 25s para fijar satélites GPS en frío u offline
-    maximumAge: 120000,       // Acepta posición reciente de hasta 2 min de inmediato
+    timeout: 10000,           // 10s alta precisión antes de pasar a red/celdas
+    maximumAge: 180000,       // Acepta posición reciente de hasta 3 min de inmediato
   };
 
   const finalOpts = { ...defaultOpts, ...options };
+
+  const hasPerm = await ensureNativeLocationPermission();
+  if (!hasPerm && Capacitor.isNativePlatform()) {
+    throw new Error('PERMISSION_DENIED');
+  }
 
   /**
    * Helper unificado para llamar a la API correspondiente (Nativa o Web)
@@ -80,21 +153,29 @@ export async function getCurrentPositionSafe(options = {}) {
   const fetchPosition = async (opts) => {
     if (Capacitor.isNativePlatform()) {
       try {
-        const permStatus = await Geolocation.checkPermissions();
-        if (permStatus.location !== 'granted' && permStatus.coarseLocation !== 'granted') {
-          await Geolocation.requestPermissions();
+        const pos = await Geolocation.getCurrentPosition(opts);
+        saveLastKnownPosition(pos);
+        return pos;
+      } catch (nativeErr) {
+        // Fallback al FusedLocation del WebView si el plugin nativo falla
+        if ('geolocation' in navigator) {
+          const webPos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+          });
+          saveLastKnownPosition(webPos);
+          return webPos;
         }
-      } catch (e) {
-        // En algunas plataformas checkPermissions puede fallar silenciosamente; continuar
+        throw nativeErr;
       }
-      return await Geolocation.getCurrentPosition(opts);
     } else {
       if (!('geolocation' in navigator)) {
         throw new Error('Geolocalización no soportada');
       }
-      return new Promise((resolve, reject) => {
+      const webPos = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, opts);
       });
+      saveLastKnownPosition(webPos);
+      return webPos;
     }
   };
 
@@ -103,54 +184,43 @@ export async function getCurrentPositionSafe(options = {}) {
    */
   const normalizeError = (err) => {
     const msg = (err?.message || '').toLowerCase();
-    if (err.code === 1 || msg.includes('denied') || msg.includes('permission')) {
+    if (err?.code === 1 || msg.includes('denied') || msg.includes('permission')) {
       return new Error('PERMISSION_DENIED');
     }
-    if (err.code === 2 || msg.includes('unavailable')) {
+    if (err?.code === 2 || msg.includes('unavailable') || msg.includes('disabled')) {
       return new Error('POSITION_UNAVAILABLE');
     }
-    if (err.code === 3 || msg.includes('timeout')) {
+    if (err?.code === 3 || msg.includes('timeout')) {
       return new Error('TIMEOUT');
     }
     return err;
   };
 
-  // ---------------------------------------------------------
-  // ESTRATEGIA RESILIENTE:
-  // 1. Alta precisión con timeout adecuado
-  // 2. Fallback a baja precisión (red/celdas)
-  // 3. Fallback a última posición en caché disponible
-  // ---------------------------------------------------------
   try {
     return await fetchPosition(finalOpts);
   } catch (error) {
     const normErr = normalizeError(error);
 
-    if ((normErr.message === 'TIMEOUT' || normErr.message === 'POSITION_UNAVAILABLE') && finalOpts.enableHighAccuracy) {
-      console.warn('[geolocation] High accuracy falló, reintentando con precisión de red o caché...');
+    if (normErr.message !== 'PERMISSION_DENIED') {
+      console.warn('[geolocation] High accuracy falló, reintentando con precisión de red/Wi-Fi/celdas...');
 
-      // 1. Reintento con baja precisión (red/celdas) y caché de 5 minutos
+      // 1. Reintento rápido con baja precisión (red/celdas/Wi-Fi)
       try {
         const lowAccuracyOpts = {
           ...finalOpts,
           enableHighAccuracy: false,
-          timeout: 15000,
-          maximumAge: 300000,
+          timeout: 6000,
+          maximumAge: 600000,
         };
         return await fetchPosition(lowAccuracyOpts);
       } catch (errLow) {
-        // 2. Último recurso: intentar cualquier posición en caché de los últimos 15 minutos
-        try {
-          console.warn('[geolocation] Reintentando con última posición en caché disponible...');
-          const cacheOpts = {
-            enableHighAccuracy: false,
-            timeout: 5000,
-            maximumAge: 900000, // 15 minutos
-          };
-          return await fetchPosition(cacheOpts);
-        } catch (errCache) {
-          throw normalizeError(errLow);
+        // 2. Último recurso: posición reciente guardada en memoria/sesión
+        const cached = getLastKnownPosition();
+        if (cached) {
+          console.log('[geolocation] Usando última ubicación válida en caché.');
+          return cached;
         }
+        throw normalizeError(errLow);
       }
     }
 
@@ -159,46 +229,76 @@ export async function getCurrentPositionSafe(options = {}) {
 }
 
 /**
- * Intenta obtener la ubicación rápidamente (por defecto máx. 6s) sin reintentos largos.
- * Si hay timeout, falta de señal o error, devuelve null para omitir la geolocalización sin bloquear.
+ * Intenta obtener la ubicación rápidamente (por defecto máx. 6s):
+ * 1. Verifica/solicita permiso nativo primero (sin descontar tiempo del reloj de 6s).
+ * 2. Si hay una ubicación muy reciente (< 45s), la usa de inmediato.
+ * 3. Intenta GPS de alta precisión durante ~3.5s.
+ * 4. Si está bajo techo o tarda, hace fallback inmediato a ubicación por Red/Wi-Fi/Celdas (~2.5s).
+ * 5. Si todo expira, usa la última ubicación conocida de la sesión (hasta 15 min) o devuelve null sin bloquear.
  */
 export async function getOptionalPositionFast(timeoutMs = 6000) {
-  const safeTimeout = Math.max(500, Number(timeoutMs) || 6000);
+  const safeTimeout = Math.max(2000, Number(timeoutMs) || 6000);
+
+  // Si ya tenemos una coordenada fresca (< 45 segundos), devolverla al instante
+  const veryFresh = getLastKnownPosition(45 * 1000);
+  if (veryFresh) {
+    return veryFresh;
+  }
+
   try {
-    const attempt = (async () => {
-      if (Capacitor.isNativePlatform()) {
-        try {
-          const permStatus = await Geolocation.checkPermissions();
-          if (permStatus.location !== 'granted' && permStatus.coarseLocation !== 'granted') {
+    const hasPerm = await ensureNativeLocationPermission();
+    if (!hasPerm) return getLastKnownPosition();
+
+    const highAccTimeout = Math.max(1500, Math.round(safeTimeout * 0.58)); // ~3.5s de 6s
+    const lowAccTimeout = Math.max(1500, safeTimeout - highAccTimeout);   // ~2.5s de 6s
+
+    const queryOnce = async (highAccuracy, tOut, maxAge) => {
+      const opts = {
+        enableHighAccuracy: highAccuracy,
+        timeout: tOut,
+        maximumAge: maxAge,
+      };
+
+      const callProvider = async () => {
+        if (Capacitor.isNativePlatform()) {
+          try {
+            return await Geolocation.getCurrentPosition(opts);
+          } catch {
+            if ('geolocation' in navigator) {
+              return await new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+              });
+            }
             return null;
           }
-        } catch (e) {
-          // continuar
         }
-        return await Geolocation.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: safeTimeout,
-          maximumAge: 120000,
+        if (!('geolocation' in navigator)) return null;
+        return await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, opts);
         });
-      }
-      if (!('geolocation' in navigator)) return null;
-      return await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: safeTimeout,
-          maximumAge: 120000,
-        });
-      });
-    })();
+      };
 
-    const timer = new Promise((resolve) => setTimeout(() => resolve(null), safeTimeout + 250));
-    const pos = await Promise.race([attempt, timer]);
+      const guardTimer = new Promise((resolve) => setTimeout(() => resolve(null), tOut + 200));
+      return await Promise.race([callProvider(), guardTimer]);
+    };
+
+    // Intento 1: Alta precisión (GPS)
+    let pos = await queryOnce(true, highAccTimeout, 180000).catch(() => null);
+
+    // Intento 2: Baja precisión (Red / Wi-Fi / Antenas celulares - funciona bajo techo en <1.5s)
+    if (!pos || !pos.coords) {
+      pos = await queryOnce(false, lowAccTimeout, 600000).catch(() => null);
+    }
+
     if (pos && pos.coords && Number.isFinite(pos.coords.latitude) && Number.isFinite(pos.coords.longitude)) {
+      saveLastKnownPosition(pos);
       return pos;
     }
-    return null;
+
+    // Intento 3: Última ubicación válida conocida en los últimos 15 minutos
+    return getLastKnownPosition();
   } catch (err) {
     console.warn('[geolocation] getOptionalPositionFast omitido:', err?.message || err);
-    return null;
+    return getLastKnownPosition();
   }
 }

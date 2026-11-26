@@ -918,6 +918,40 @@ export default function App() {
     return () => window.removeEventListener('offline-storage-error', handleOfflineStorageError);
   }, [toast]);
 
+  // Interceptor global para APK / Electron: si cualquier <img> falla al cargar una ruta
+  // relativa local (p. ej. /portafolio/..., /bronce.png, /uploads/..., /login/..., /brands/...),
+  // redirigirla automáticamente a https://cervezasfinas.com/...
+  useEffect(() => {
+    const handleGlobalImgError = (event) => {
+      const target = event?.target;
+      if (!target || target.tagName !== 'IMG') return;
+      if (target.dataset?.cfRemoteTried === '1') return;
+
+      const rawAttr = target.getAttribute('src') || '';
+      const currentSrc = target.currentSrc || target.src || '';
+      if (!rawAttr && !currentSrc) return;
+      if (rawAttr.startsWith('data:') || rawAttr.startsWith('blob:')) return;
+
+      let pathname = '';
+      if (rawAttr.startsWith('/') && !rawAttr.startsWith('//')) {
+        pathname = rawAttr;
+      } else if (/^(https?:\/\/localhost|capacitor:\/\/localhost|file:\/\/)/i.test(currentSrc)) {
+        try {
+          const parsed = new URL(currentSrc);
+          pathname = parsed.pathname + (parsed.search || '');
+        } catch {}
+      }
+
+      if (pathname && pathname !== '/placeholder.svg') {
+        target.dataset.cfRemoteTried = '1';
+        target.src = `https://cervezasfinas.com${pathname}`;
+      }
+    };
+
+    window.addEventListener('error', handleGlobalImgError, true);
+    return () => window.removeEventListener('error', handleGlobalImgError, true);
+  }, []);
+
   useEffect(() => {
     const initServices = async () => {
       console.log('[App] Iniciando servicios...');

@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { supabase } from "../supabaseClient";
 import { useSupabaseAuth } from "@/contexts/SupabaseAuthContext";
 import { Camera, MapPin, StickyNote, Sparkles } from "lucide-react";
-import { getOptionalPositionFast } from "@/lib/geolocation";
+import { getOptionalPositionFast, warmUpGeolocation } from "@/lib/geolocation";
 import { getTodayMexico, getNowMexico, getMexicoDateTime } from "@/lib/dateUtils";
 import { DirectCameraModal } from "@/components/common/DirectCameraModal";
 

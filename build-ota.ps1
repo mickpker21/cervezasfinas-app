@@ -47,11 +47,17 @@ Copy-Item -Path "$root\dist\assets\*" -Destination "$tempZipDir\assets\" -Recurs
 Copy-Item -Path "$root\dist\index.html" -Destination "$tempZipDir\" -Force
 if (Test-Path "$root\dist\manifest.webmanifest") { Copy-Item "$root\dist\manifest.webmanifest" "$tempZipDir\" -Force }
 if (Test-Path "$root\dist\service-worker.js") { Copy-Item "$root\dist\service-worker.js" "$tempZipDir\" -Force }
-# Include the root logos referenced directly by index.html and shared UI.
-foreach ($logoName in @("logo.png", "logo6.png", "login-avatar.jpg")) {
+# Include the root logos, placeholders and UI folders (brands, icons, reference) referenced by index.html and shared UI.
+foreach ($logoName in @("logo.png", "logo2.png", "logo2.jpeg", "logo3.png", "LOGO4.png", "logo6.png", "logo9.png", "logoN.png", "logox.png", "login-avatar.jpg", "marcas.png", "placeholder.svg")) {
     $logoPath = Join-Path "$root\dist" $logoName
     if (Test-Path -LiteralPath $logoPath -PathType Leaf) {
         Copy-Item -LiteralPath $logoPath -Destination "$tempZipDir\" -Force
+    }
+}
+foreach ($subDir in @("brands", "icons", "reference")) {
+    $srcSubDir = Join-Path "$root\dist" $subDir
+    if (Test-Path -LiteralPath $srcSubDir -PathType Container) {
+        Copy-Item -LiteralPath $srcSubDir -Destination "$tempZipDir\$subDir" -Recurse -Force
     }
 }
 

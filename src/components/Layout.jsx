@@ -8,7 +8,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { useRef, useEffect } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { kvStorage } from '@/services/kvStorage';
-import { APP_CURRENT_VERSION } from '@/services/updateService';
+import { APP_CURRENT_VERSION, getDisplayAppVersion } from '@/services/updateService';
 import GlobalAnnouncement from '@/components/GlobalAnnouncement';
 import MandatoryPhoneModal from '@/components/MandatoryPhoneModal';
 
@@ -832,12 +832,18 @@ const SidebarContent = ({ onLinkClick, collapsed, onToggleCollapse }) => {
           {!collapsed && <span>Log out</span>}
         </button>
 
-        {!collapsed && (
+        {collapsed ? (
+          <div className="pt-1 flex justify-center">
+            <span className="font-mono text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-full border border-emerald-500/20">
+              v{getDisplayAppVersion()}
+            </span>
+          </div>
+        ) : (
           <div className="pt-2 px-2 flex items-center justify-between text-[10px] font-bold text-slate-500">
             <span>Cervezas Finas</span>
             <span className="flex items-center gap-1 font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              v{APP_CURRENT_VERSION}
+              v{getDisplayAppVersion()}
             </span>
           </div>
         )}
@@ -1110,6 +1116,9 @@ const Layout = ({ children }) => {
               <div className="flex items-center gap-2">
                 <img alt="Logo" className="h-8" src="/logo.png" />
                 <span className="text-sm font-black tracking-wider text-emerald-400">CERVEZAS FINAS</span>
+                <span className="font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  v{getDisplayAppVersion()}
+                </span>
               </div>
             </div>
           </header>

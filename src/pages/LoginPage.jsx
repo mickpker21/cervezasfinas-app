@@ -24,7 +24,7 @@ import {
 import { Capacitor } from "@capacitor/core";
 import { kvStorage } from "@/services/kvStorage";
 import { supabase } from "@/supabaseClient";
-import { APP_CURRENT_VERSION } from "@/services/updateService";
+import { APP_CURRENT_VERSION, getDisplayAppVersion } from "@/services/updateService";
 import loginAvatar from "@/assets/login-avatar.jpg";
 
 export default function LoginPage() {
@@ -701,7 +701,7 @@ export default function LoginPage() {
 
             <div className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-[#00e676]" />
-              <span className="font-mono text-emerald-400 font-bold">v{APP_CURRENT_VERSION}</span>
+              <span className="font-mono text-emerald-400 font-bold">v{getDisplayAppVersion()}</span>
               <span>•</span>
               <span>Enterprise Release</span>
             </div>

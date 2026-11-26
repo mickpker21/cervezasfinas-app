@@ -37,7 +37,7 @@ import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import { getClients, updateClient, searchClients } from '@/repositories/clientsRepository';
 import { getAllowedRoutes } from '@/repositories/metadataRepository';
-import { getOptionalPositionFast } from '@/lib/geolocation';
+import { getOptionalPositionFast, warmUpGeolocation } from '@/lib/geolocation';
 import { loadEvaluationConfig, defaultEvaluationConfig, onEvaluationConfigUpdated, subscribeEvaluationConfig } from '@/lib/evaluationConfig';
 import { 
   startOnboardSupervision, 
@@ -122,6 +122,7 @@ export default function SupervisorOnboardSupervision() {
 
   // Load Initial Data
   useEffect(() => {
+    warmUpGeolocation();
     const init = async () => {
       if (!user) return;
       

@@ -13,7 +13,7 @@ import { CheckCircle2, AlertTriangle, ArrowRight, ArrowLeft, Camera, CameraOff, 
 import { useToast } from '@/components/ui/use-toast';
 import { getClientById, updateClient } from '@/repositories/clientsRepository';
 import { loadEvaluationConfig, onEvaluationConfigUpdated, subscribeEvaluationConfig } from '@/lib/evaluationConfig';
-import { getOptionalPositionFast } from '@/lib/geolocation';
+import { getOptionalPositionFast, warmUpGeolocation } from '@/lib/geolocation';
 import { DirectCameraField } from '@/components/common/DirectCameraModal';
 import BarcodeScanner from 'react-qr-barcode-scanner';
 
@@ -221,6 +221,10 @@ export default function NuevaEvaluacion({
 }) {
   const { user } = useSupabaseAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    warmUpGeolocation();
+  }, [clientId]);
 
   const [cfg, setCfg] = useState(null);
   const [form, setForm] = useState({ ...initialForm, nombre: user?.user_metadata?.full_name || user?.email || '' });

@@ -1,7 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 // Ensure this matches the version in package.json
-export const APP_CURRENT_VERSION = '2.1.8';
+export const APP_CURRENT_VERSION = '2.1.9';
 
 // URL to the version manifest hosted on your server
 export const UPDATE_MANIFEST_URL = 'https://cervezasfinas.com/apps/version.json';
@@ -29,6 +29,23 @@ export function isNewerVersion(remoteVersion, localVersion) {
     if (vRemote[i] < vLocal[i]) return false;
   }
   return false;
+}
+
+/**
+ * Devuelve la versión activa real de la aplicación (la mayor entre APP_CURRENT_VERSION
+ * compilada en el código y current_ota_version guardada por OTA en localStorage).
+ */
+export function getDisplayAppVersion() {
+  try {
+    const savedOta = typeof localStorage !== 'undefined' ? localStorage.getItem('current_ota_version') : null;
+    if (savedOta && isNewerVersion(savedOta, APP_CURRENT_VERSION)) {
+      return savedOta;
+    }
+    if (savedOta && isNewerVersion(APP_CURRENT_VERSION, savedOta)) {
+      localStorage.setItem('current_ota_version', APP_CURRENT_VERSION);
+    }
+  } catch {}
+  return APP_CURRENT_VERSION;
 }
 
 /**

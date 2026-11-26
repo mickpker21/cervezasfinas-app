@@ -9,7 +9,7 @@ import { toast } from '@/components/ui/use-toast';
 import { v4 as uuidv4 } from 'uuid';
 import { fetchVentasPorSku } from '@/lib/mysqlVentasPorSku';
 import { Newspaper, Download, Smartphone, Upload, FileText, Users } from 'lucide-react';
-import { APP_CURRENT_VERSION } from '@/services/updateService';
+import { APP_CURRENT_VERSION, getDisplayAppVersion } from '@/services/updateService';
 
 const SALES_EXPORT_COLUMNS = [
   'id', 'period_date', 'ruta', 'cve_cliente', 'client_id', 'num_remision', 'cve_venta',
@@ -218,7 +218,7 @@ const UtilidadesPage = () => {
             <CardDescription>
               Descarga la última versión de la App (APK) para instalar en tu dispositivo.
               <br/>
-              <span className="font-mono text-emerald-500 mt-1 inline-block">Versión Instalada: v{APP_CURRENT_VERSION}</span>
+              <span className="font-mono text-emerald-500 mt-1 inline-block">Versión Instalada: v{getDisplayAppVersion()}</span>
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center p-6 space-y-4">
