@@ -1,7 +1,7 @@
 {
   "name": "cervezas-finas-crm",
   "private": true,
-  "version": "2.1.9",
+  "version": "2.2.0",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {

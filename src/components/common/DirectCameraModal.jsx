@@ -1,38 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Capacitor } from '@capacitor/core';
 import { Camera, RefreshCw, X, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
 
 /**
  * DirectCameraModal
- * Opens the device's live camera directly via WebRTC (getUserMedia),
- * bypassing the OS File Picker / Photo Gallery so users must take a real-time photo.
+ * Usa DialogPrimitive (@radix-ui/react-dialog) para integrarse nativamente con la pila
+ * de FocusScope y DismissableLayer de Radix cuando se abre dentro de otro Dialog,
+ * sin bloquear los eventos sintéticos de React.
  */
 export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fotografía' }) {
-  const overlayRef = useRef(null);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const nativeInputRef = useRef(null);
+  const lastTriggerRef = useRef(0);
   const [facingMode, setFacingMode] = useState('environment');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [capturing, setCapturing] = useState(false);
-
-  // Evitar que Radix Dialog (DismissableLayer en document) interprete los toques
-  // dentro del portal de cámara como "click afuera" y cierre el modal padre.
-  useEffect(() => {
-    if (!open) return;
-    const el = overlayRef.current;
-    if (!el) return;
-    const stopNativeBubble = (e) => {
-      e.stopPropagation();
-    };
-    const events = ['pointerdown', 'mousedown', 'touchstart', 'click', 'focusin'];
-    events.forEach((evt) => el.addEventListener(evt, stopNativeBubble, false));
-    return () => {
-      events.forEach((evt) => el.removeEventListener(evt, stopNativeBubble, false));
-    };
-  }, [open]);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -48,6 +32,26 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
     }
   }, []);
 
+  const attachStreamToVideo = useCallback(async (videoEl) => {
+    if (!videoEl || !streamRef.current) return;
+    try {
+      if (videoEl.srcObject !== streamRef.current) {
+        videoEl.srcObject = streamRef.current;
+      }
+      await videoEl.play().catch(() => {});
+    } catch (e) {}
+  }, []);
+
+  const setVideoElementRef = useCallback(
+    (node) => {
+      videoRef.current = node;
+      if (node && streamRef.current) {
+        attachStreamToVideo(node);
+      }
+    },
+    [attachStreamToVideo]
+  );
+
   const startCamera = useCallback(
     async (mode) => {
       setLoading(true);
@@ -55,7 +59,6 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
       stopStream();
 
       try {
-        // Ensure native OS camera permission is granted on Android/iOS APK/IPA
         if (Capacitor.isNativePlatform()) {
           try {
             const { BarcodeScanner: MLKit } = await import('@capacitor-mlkit/barcode-scanning');
@@ -83,7 +86,6 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
             audio: false,
           });
         } catch (firstErr) {
-          // Fallback to any available video camera
           stream = await navigator.mediaDevices.getUserMedia({
             video: true,
             audio: false,
@@ -92,20 +94,19 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
 
         streamRef.current = stream;
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
+          await attachStreamToVideo(videoRef.current);
         }
       } catch (err) {
         console.error('[DirectCamera] Error starting camera:', err);
         setError(
           err?.message ||
-            'No se pudo acceder a la cámara. Verifica que hayas otorgado permisos de cámara.'
+            'No se pudo acceder a la cámara. Verifica permisos o usa el botón Cámara Nativa.'
         );
       } finally {
         setLoading(false);
       }
     },
-    [stopStream]
+    [stopStream, attachStreamToVideo]
   );
 
   useEffect(() => {
@@ -142,16 +143,19 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
   const handleTakePhoto = async (e) => {
     if (e) {
       e.preventDefault();
-      e.stopPropagation();
     }
+    // Evitar doble disparo cuando se activa por onTouchEnd + onClick
+    const now = Date.now();
+    if (now - lastTriggerRef.current < 450) return;
+    lastTriggerRef.current = now;
+
     const video = videoRef.current;
     if (!video || capturing) return;
     setCapturing(true);
 
     try {
-      // Si el stream acaba de arrancar, dar hasta 600ms para que reporte dimensiones reales
       let attempts = 0;
-      while ((!video.videoWidth || !video.videoHeight) && attempts < 6) {
+      while ((!video.videoWidth || !video.videoHeight) && attempts < 8) {
         await new Promise((r) => setTimeout(r, 100));
         attempts++;
       }
@@ -183,7 +187,6 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
         }
       });
 
-      // Fallback si Android WebView devuelve null en canvas.toBlob()
       if (!blob) {
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         if (dataUrl && dataUrl.startsWith('data:image')) {
@@ -200,7 +203,6 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
             lastModified: Date.now(),
           });
         } catch {
-          // Algunos WebViews antiguos no soportan constructor File
           blob.name = fileName;
           blob.lastModified = Date.now();
           file = blob;
@@ -209,142 +211,158 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
         onCapture(file);
         onClose();
       } else {
-        setError('No se pudo capturar la imagen desde el video. Intenta con Cámara Nativa.');
+        setError('No se pudo capturar la imagen desde el video. Usa el botón Cámara Nativa.');
       }
     } catch (err) {
       console.error('[DirectCamera] Capture error:', err);
-      setError('Error al capturar la foto. Intenta nuevamente o usa Cámara Nativa.');
+      setError('Error al capturar la foto. Usa el botón Cámara Nativa.');
     } finally {
       setCapturing(false);
     }
   };
 
-  if (!open) return null;
-
-  const modalContent = (
-    <div
-      ref={overlayRef}
-      style={{ pointerEvents: 'auto' }}
-      className="fixed inset-0 z-[20000] pointer-events-auto bg-black flex flex-col select-none"
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
+  return (
+    <DialogPrimitive.Root
+      open={!!open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          stopStream();
+          onClose();
+        }
+      }}
     >
-      <input
-        ref={nativeInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleNativeFileChange}
-        className="hidden"
-      />
-      {/* Top Bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-950/90 border-b border-white/10 text-white shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <Camera className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="text-sm font-bold truncate">{title}</span>
-        </div>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[20000] bg-black/95" />
+        <DialogPrimitive.Content
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
+          className="fixed inset-0 z-[20001] bg-black flex flex-col select-none outline-none"
+        >
+          <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">
+            Captura directa de fotografía con cámara
+          </DialogPrimitive.Description>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() =>
-              setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
-            }
-            className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold flex items-center gap-1.5 text-white transition"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {facingMode === 'environment' ? 'Trasera' : 'Frontal'}
-          </button>
+          {/* Top Bar */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-950/90 border-b border-white/10 text-white shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Camera className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span className="text-sm font-bold truncate">{title}</span>
+            </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              stopStream();
-              onClose();
-            }}
-            className="p-2 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 transition"
-            aria-label="Cerrar cámara"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Live Video Area */}
-      <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
-        {loading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white gap-2">
-            <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
-            <span className="text-xs text-slate-300 font-semibold">Abriendo cámara...</span>
-          </div>
-        )}
-
-        {error ? (
-          <div className="p-6 max-w-xs text-center space-y-4">
-            <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto" />
-            <p className="text-sm text-white font-bold">{error}</p>
-            <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => startCamera(facingMode)}
-                className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+                onClick={() =>
+                  setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
+                }
+                className="px-3 py-1.5 rounded-xl bg-white/10 active:bg-white/25 text-xs font-bold flex items-center gap-1.5 text-white transition touch-manipulation"
               >
-                Reintentar Cámara
+                <RefreshCw className="w-3.5 h-3.5" />
+                {facingMode === 'environment' ? 'Trasera' : 'Frontal'}
               </button>
+
               <button
                 type="button"
-                onClick={() => nativeInputRef.current?.click()}
-                className="px-4 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold"
+                onClick={() => {
+                  stopStream();
+                  onClose();
+                }}
+                className="p-2 rounded-xl bg-rose-500/20 text-rose-300 active:bg-rose-500/40 transition touch-manipulation"
+                aria-label="Cerrar cámara"
               >
-                Usar Cámara Nativa
+                <X className="w-5 h-5" />
               </button>
             </div>
           </div>
-        ) : (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
-        )}
-      </div>
 
-      {/* Bottom Shutter Bar */}
-      <div className="py-5 px-6 bg-slate-950/95 border-t border-white/10 flex items-center justify-center relative shrink-0">
-        <button
-          type="button"
-          disabled={loading || !!error || capturing}
-          onClick={handleTakePhoto}
-          className="group flex flex-col items-center gap-1.5 disabled:opacity-40 touch-manipulation pointer-events-auto"
-        >
-          <div className="w-20 h-20 p-1.5 rounded-full border-4 border-emerald-400 flex items-center justify-center active:scale-90 transition-transform">
-            <div className="w-16 h-16 rounded-full bg-white group-hover:bg-emerald-400 transition-colors flex items-center justify-center">
-              <Camera className="w-7 h-7 text-slate-950" />
-            </div>
+          {/* Live Video Area */}
+          <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+            {loading && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white gap-2">
+                <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
+                <span className="text-xs text-slate-300 font-semibold">Abriendo cámara...</span>
+              </div>
+            )}
+
+            {error ? (
+              <div className="p-6 max-w-xs text-center space-y-4">
+                <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto" />
+                <p className="text-sm text-white font-bold">{error}</p>
+                <div className="flex flex-col gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => startCamera(facingMode)}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 active:bg-emerald-500 text-white text-xs font-bold touch-manipulation"
+                  >
+                    Reintentar Cámara
+                  </button>
+                  <label className="px-4 py-2.5 rounded-xl bg-white/15 active:bg-white/30 text-white text-xs font-bold cursor-pointer inline-block touch-manipulation">
+                    Usar Cámara Nativa
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleNativeFileChange}
+                      className="sr-only"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : (
+              <video
+                ref={setVideoElementRef}
+                autoPlay
+                playsInline
+                muted
+                onLoadedMetadata={(e) => {
+                  try {
+                    e.currentTarget.play().catch(() => {});
+                  } catch {}
+                }}
+                className="w-full h-full object-cover"
+              />
+            )}
           </div>
-          <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
-            {capturing ? 'Capturando...' : 'Tomar Foto'}
-          </span>
-        </button>
 
-        <button
-          type="button"
-          onClick={() => nativeInputRef.current?.click()}
-          className="absolute right-4 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-[11px] font-bold text-slate-200 touch-manipulation"
-        >
-          Cámara nativa
-        </button>
-      </div>
-    </div>
+          {/* Bottom Shutter Bar */}
+          <div className="py-5 px-6 bg-slate-950/95 border-t border-white/10 flex items-center justify-center relative shrink-0">
+            <button
+              type="button"
+              disabled={loading || !!error || capturing}
+              onClick={handleTakePhoto}
+              onTouchEnd={(e) => {
+                if (!loading && !error && !capturing) {
+                  handleTakePhoto(e);
+                }
+              }}
+              className="group flex flex-col items-center gap-1.5 disabled:opacity-40 touch-manipulation cursor-pointer"
+            >
+              <div className="w-20 h-20 p-1.5 rounded-full border-4 border-emerald-400 flex items-center justify-center active:scale-90 transition-transform">
+                <div className="w-16 h-16 rounded-full bg-white active:bg-emerald-400 transition-colors flex items-center justify-center">
+                  <Camera className="w-7 h-7 text-slate-950" />
+                </div>
+              </div>
+              <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
+                {capturing ? 'Capturando...' : 'Tomar Foto'}
+              </span>
+            </button>
+
+            <label className="absolute right-4 px-3 py-2.5 rounded-xl bg-white/10 active:bg-white/25 text-[11px] font-bold text-slate-200 cursor-pointer touch-manipulation">
+              Cámara nativa
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleNativeFileChange}
+                className="sr-only"
+              />
+            </label>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
-
-  return typeof document !== 'undefined'
-    ? createPortal(modalContent, document.body)
-    : modalContent;
 }
 
 /**
