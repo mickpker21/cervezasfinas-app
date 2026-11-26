@@ -308,10 +308,15 @@ async function syncVisit(op) {
  * Handler: Evaluation PDV (MySQL)
  */
 async function syncEvaluationPDV(op) {
-  const payload = op.payload;
+  const payload = op.payload || {};
   logger.info('SYNC', 'EVAL_PDV_START', { id: payload.id });
 
   const { importEvaluationsPDVApi } = await import('@/lib/mysqlEvaluations');
+  const { sanitizeEvalForMySQL } = await import('@/repositories/evaluationsRepository');
+
+  if (typeof payload.payload === 'string') {
+    try { payload.payload = JSON.parse(payload.payload); } catch { payload.payload = {}; }
+  }
 
   // Handle Base64 photos
   if (payload.payload?._base64_photos) {
@@ -327,22 +332,35 @@ async function syncEvaluationPDV(op) {
     delete payload.payload._base64_photos;
   }
 
-  const res = await importEvaluationsPDVApi([payload]);
+  const sanitizedRow = sanitizeEvalForMySQL(payload, false);
+  const res = await importEvaluationsPDVApi([sanitizedRow]);
   if (res.errors && res.errors.length > 0) {
     throw new Error('MySQL Import Errors: ' + JSON.stringify(res.errors));
   }
 
-  logger.info('SYNC', 'EVAL_PDV_SUCCESS', { id: payload.id });
+  try {
+    const db = await getDb();
+    if (!isMockDb()) {
+      await db.run('UPDATE evaluaciones_pdv SET synced = 1 WHERE id = ?', [sanitizedRow.id]);
+    }
+  } catch {}
+
+  logger.info('SYNC', 'EVAL_PDV_SUCCESS', { id: sanitizedRow.id });
 }
 
 /**
  * Handler: Evaluation Canal Moderno (MySQL)
  */
 async function syncEvaluationCM(op) {
-  const payload = op.payload;
+  const payload = op.payload || {};
   logger.info('SYNC', 'EVAL_CM_START', { id: payload.id });
 
   const { importEvaluationsCMApi } = await import('@/lib/mysqlEvaluations');
+  const { sanitizeEvalForMySQL } = await import('@/repositories/evaluationsRepository');
+
+  if (typeof payload.payload === 'string') {
+    try { payload.payload = JSON.parse(payload.payload); } catch { payload.payload = {}; }
+  }
 
   // Handle Base64 photos
   if (payload.payload?._base64_photos) {
@@ -365,12 +383,20 @@ async function syncEvaluationCM(op) {
     delete payload.payload._base64_photos;
   }
 
-  const res = await importEvaluationsCMApi([payload]);
+  const sanitizedRow = sanitizeEvalForMySQL(payload, true);
+  const res = await importEvaluationsCMApi([sanitizedRow]);
   if (res.errors && res.errors.length > 0) {
     throw new Error('MySQL Import Errors: ' + JSON.stringify(res.errors));
   }
 
-  logger.info('SYNC', 'EVAL_CM_SUCCESS', { id: payload.id });
+  try {
+    const db = await getDb();
+    if (!isMockDb()) {
+      await db.run('UPDATE evaluaciones SET synced = 1 WHERE id = ?', [sanitizedRow.id]);
+    }
+  } catch {}
+
+  logger.info('SYNC', 'EVAL_CM_SUCCESS', { id: sanitizedRow.id });
 }
 
 /**

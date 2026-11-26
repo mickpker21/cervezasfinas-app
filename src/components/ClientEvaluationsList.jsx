@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { getAllEvaluations } from "@/repositories/evaluationsRepository";
+import EvaluationDetailViewer from "@/components/EvaluationDetailViewer";
 
 // Muestra evaluaciones recientes del PDV relacionadas por nombre/negocio.
 // Nota: La tabla evaluaciones_pdv actualmente no guarda client_id, así que hacemos match por nombre.
@@ -22,54 +24,52 @@ export default function ClientEvaluationsList({ client }) {
 
   useEffect(() => {
     const fetchEvaluations = async () => {
-      if (!client?.id) return;
+      if (!client?.id && !client?.client_code) return;
       setLoading(true);
       try {
-        // Intentar primero por client_id si la tabla lo tiene poblado
-        let q = supabase
-          .from("evaluaciones_pdv")
-          .select("*")
-          .eq("client_id", client.id)
-          .order("fecha", { ascending: false })
-          .limit(100);
-        if (fromDate) q = q.gte("fecha", fromDate);
-        if (toDate) q = q.lte("fecha", toDate);
-        const byClient = await q;
-        let rows = Array.isArray(byClient.data) ? byClient.data : [];
+        // 1. Cargar de MySQL + SQLite local (nuevo sistema unificado)
+        const allRepoEvals = await getAllEvaluations({
+          from: fromDate || undefined,
+          to: toDate || undefined,
+        }).catch(() => []);
 
-        // Fallback: si no hay resultados por client_id, buscar por nombre del negocio en columnas conocidas
-        if ((!rows || rows.length === 0) && needles.length) {
-          const queries = [];
-          const cols = ["punto_venta"]; // usar snake_case compatible
-          needles.forEach((needle) => {
-            cols.forEach((col) => {
-              let qq = supabase
-                .from("evaluaciones_pdv")
-                .select("*")
-                .ilike(col, `%${needle}%`)
-                .order("fecha", { ascending: false })
-                .limit(25);
-              if (fromDate) qq = qq.gte("fecha", fromDate);
-              if (toDate) qq = qq.lte("fecha", toDate);
-              queries.push(qq);
-            });
-          });
-          const results = await Promise.all(queries.map((qq) => qq));
-          rows = results
-            .filter((r) => !r.error && Array.isArray(r.data))
-            .flatMap((r) => r.data);
-        }
+        const cIdStr = client?.id != null ? String(client.id).trim() : "";
+        const cCodeStr = String(client?.client_code || client?.code || "").trim().toLowerCase();
+        const lowerNeedles = needles.map((n) => n.toLowerCase());
 
-        // De-duplicar por id si existe, si no por combinación fecha+puntoVenta
+        const matchedRepo = (allRepoEvals || []).filter((ev) => {
+          if (cIdStr && String(ev.client_id || "").trim() === cIdStr) return true;
+          if (cCodeStr && String(ev.client_code || "").trim().toLowerCase() === cCodeStr) return true;
+          const pv = String(ev.punto_venta || "").trim().toLowerCase();
+          if (pv && lowerNeedles.some((n) => n && pv.includes(n))) return true;
+          return false;
+        });
+
+        // 2. Fallback legacy Supabase
+        let sbRows = [];
+        try {
+          if (client?.id) {
+            let q = supabase
+              .from("evaluaciones_pdv")
+              .select("*")
+              .eq("client_id", client.id)
+              .order("fecha", { ascending: false })
+              .limit(50);
+            if (fromDate) q = q.gte("fecha", fromDate);
+            if (toDate) q = q.lte("fecha", toDate);
+            const byClient = await q;
+            if (Array.isArray(byClient.data)) sbRows = byClient.data;
+          }
+        } catch {}
+
         const map = new Map();
-        for (const r of rows) {
-          const key = r.id || `${r.fecha || r.created_at}-${r.puntoVenta || r.punto_venta || ""}-${r.user_id || ""}`;
+        for (const r of [...matchedRepo, ...sbRows]) {
+          const key = r.id || `${r.fecha || r.created_at}-${r.puntoVenta || r.punto_venta || ""}`;
           if (!map.has(key)) map.set(key, r);
         }
-        // Ordenar por fecha desc (fallback a created_at)
         const sorted = Array.from(map.values()).sort((a, b) => {
-          const da = new Date(a.fecha || a.created_at || 0).getTime();
-          const db = new Date(b.fecha || b.created_at || 0).getTime();
+          const da = new Date(String(a.fecha || a.created_at || 0).replace(" ", "T")).getTime() || 0;
+          const db = new Date(String(b.fecha || b.created_at || 0).replace(" ", "T")).getTime() || 0;
           return db - da;
         });
         setItems(sorted.slice(0, 100));
@@ -81,7 +81,7 @@ export default function ClientEvaluationsList({ client }) {
       }
     };
     fetchEvaluations();
-  }, [client?.id, fromDate, toDate, needles]);
+  }, [client?.id, client?.client_code, fromDate, toDate, needles]);
 
   return (
     <div className="mt-2">
@@ -128,39 +128,13 @@ export default function ClientEvaluationsList({ client }) {
       )}
 
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
-        <DialogContent aria-describedby="desc-eval-detail-dialog">
+        <DialogContent className="max-w-2xl bg-slate-900 text-white border-slate-700 max-h-[85vh] overflow-y-auto" aria-describedby="desc-eval-detail-dialog">
           <div id="desc-eval-detail-dialog" className="sr-only">Detalle completo de la evaluación seleccionada</div>
           <DialogHeader>
             <DialogTitle>Detalle de Evaluación</DialogTitle>
           </DialogHeader>
           {selected && (
-            <div className="space-y-2 text-sm text-black">
-              <div><b>Fecha:</b> {String(selected.fecha || selected.created_at || "").slice(0, 16)}</div>
-              {selected.puntoVenta || selected.punto_venta ? (
-                <div><b>Punto de venta:</b> {selected.puntoVenta || selected.punto_venta}</div>
-              ) : null}
-              {selected.nivel || selected.tipoCliente || selected.tipo_cliente ? (
-                <div><b>Nivel:</b> {selected.nivel || selected.tipoCliente || selected.tipo_cliente}</div>
-              ) : null}
-              {selected.puntajeTotal ?? selected.puntaje_total ?? selected.puntaje ? (
-                <div><b>Puntaje:</b> {selected.puntajeTotal ?? selected.puntaje_total ?? selected.puntaje}</div>
-              ) : null}
-              {Array.isArray(selected.advertencias) && selected.advertencias.length > 0 && (
-                <div>
-                  <b>Advertencias:</b>
-                  <ul className="list-disc ml-5">
-                    {selected.advertencias.map((a, i) => <li key={i}>{a}</li>)}
-                  </ul>
-                </div>
-              )}
-              {/* Otros campos útiles si existieran */}
-              {selected.enfriadorPrimeraPos !== undefined && (
-                <div><b>Enfriador 1ra Pos:</b> {String(selected.enfriadorPrimeraPos)}</div>
-              )}
-              {selected.productividad && (
-                <div><b>Productividad:</b> {String(selected.productividad)}</div>
-              )}
-            </div>
+            <EvaluationDetailViewer evaluation={{ ...(selected.payload || {}), ...selected, tipo: selected.tipo || 'PDV' }} />
           )}
         </DialogContent>
       </Dialog>

@@ -347,20 +347,31 @@ export async function getAllSupervisions(supervisor_id) {
     // Attach visits and evaluations to each supervision
     let allVisits = [];
     let allEvals = [];
+    let allCmEvals = [];
 
     if (isMockDb()) {
         allVisits = db._storage.get('supervisor_onboard_visits') || [];
         allEvals = db._storage.get('evaluaciones_pdv') || [];
+        allCmEvals = db._storage.get('evaluaciones') || [];
     } else {
         const visitsRes = await db.query("SELECT * FROM supervisor_onboard_visits ORDER BY created_at ASC");
         allVisits = visitsRes.values || [];
         const evalsRes = await db.query("SELECT * FROM evaluaciones_pdv");
         allEvals = evalsRes.values || [];
+        try {
+            const cmRes = await db.query("SELECT * FROM evaluaciones");
+            allCmEvals = cmRes.values || [];
+        } catch {}
     }
 
     const evalsMap = {};
-    for (const e of allEvals) {
-        evalsMap[e.id] = typeof e.payload === 'string' ? JSON.parse(e.payload || '{}') : (e.payload || {});
+    for (const e of [...allEvals, ...allCmEvals]) {
+        try {
+            const parsed = typeof e.payload === 'string' ? JSON.parse(e.payload || '{}') : (e.payload || {});
+            evalsMap[e.id] = typeof parsed === 'string' ? JSON.parse(parsed || '{}') : parsed;
+        } catch {
+            evalsMap[e.id] = {};
+        }
     }
 
     const visitsMap = {};

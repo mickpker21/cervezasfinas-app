@@ -24,6 +24,7 @@ import EvaluationDetailViewer from '@/components/EvaluationDetailViewer';
 import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import { getAllSupervisions, syncOnboardSupervisions, updateOnboardSupervisionAdmin } from '@/repositories/onboardSupervisionRepository';
+import { getAllEvaluations } from '@/repositories/evaluationsRepository';
 
 export default function SupervisorOnboardSummary() {
   const { user } = useSupabaseAuth();
@@ -119,7 +120,10 @@ export default function SupervisorOnboardSummary() {
     // Sync from cloud
     if (shouldSync || localData.length === 0) {
       setSyncing(true);
-      await syncOnboardSupervisions(filterId);
+      await Promise.all([
+        syncOnboardSupervisions(filterId).catch(() => {}),
+        getAllEvaluations().catch(() => []),
+      ]);
       const freshData = await getAllSupervisions(filterId);
       setSupervisions(freshData || []);
       setSyncing(false);
@@ -532,15 +536,49 @@ export default function SupervisorOnboardSummary() {
                         </div>
                       </div>
 
-                      {v.evaluation_pdv_data && (
+                      {(v.evaluation_pdv_data || v.evaluation_pdv_id || v.survey_data?.evaluation_score != null) && (
                         <div className="pt-2 mt-2 border-t border-white/5">
                            <Button 
                              size="sm" 
                              variant="outline" 
                              className="w-full h-8 text-[10px] uppercase font-bold bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20"
-                             onClick={() => setSelectedEvalModal(v)}
+                             onClick={async () => {
+                               if (v.evaluation_pdv_data) {
+                                 setSelectedEvalModal(v);
+                                 return;
+                               }
+                               // Buscar en todas las evaluaciones por ID o por código/nombre de cliente
+                               try {
+                                 const allEvs = await getAllEvaluations({ localOnly: false });
+                                 const match =
+                                   allEvs.find((e) => v.evaluation_pdv_id && String(e.id) === String(v.evaluation_pdv_id)) ||
+                                   allEvs.find(
+                                     (e) =>
+                                       (v.client_code && String(e.client_code) === String(v.client_code)) ||
+                                       (v.client_id && String(e.client_id) === String(v.client_id))
+                                   );
+                                 if (match) {
+                                   setSelectedEvalModal({
+                                     ...v,
+                                     evaluation_pdv_data: { ...(match.payload || {}), ...match },
+                                   });
+                                   return;
+                                 }
+                               } catch {}
+                               setSelectedEvalModal({
+                                 ...v,
+                                 evaluation_pdv_data: {
+                                   punto_venta: v.client_name,
+                                   client_code: v.client_code,
+                                   puntaje_total: Number(v.survey_data?.evaluation_score || 0),
+                                   score: Number(v.survey_data?.evaluation_score || 0),
+                                   tipo: v.survey_data?.evaluation_type || 'PDV',
+                                   fecha: v.created_at,
+                                 },
+                               });
+                             }}
                            >
-                             Ver Evaluación PDV
+                             Ver Evaluación {v.survey_data?.evaluation_type || 'PDV'}
                            </Button>
                         </div>
                       )}

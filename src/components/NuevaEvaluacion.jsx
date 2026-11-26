@@ -215,6 +215,7 @@ const initialForm = {
 
 export default function NuevaEvaluacion({ 
   clientId, 
+  embeddedClient = null,
   routeName, 
   onComplete, 
   hideRedirect = false 
@@ -280,30 +281,41 @@ export default function NuevaEvaluacion({
 
   // LOAD CLIENT DETAILS (Hydration)
   useEffect(() => {
-    const cId = clientId || new URLSearchParams(window.location.search).get('clientId') || new URLSearchParams(window.location.search).get('client_id');
+    const cId = clientId || embeddedClient?.id || new URLSearchParams(window.location.search).get('clientId') || new URLSearchParams(window.location.search).get('client_id');
+
+    const applyClientToForm = (clientData) => {
+      if (!clientData) return;
+      const t = (clientData.client_type || clientData.level || clientData.type || '').toString();
+      const displayName = clientData.business_name || clientData.name || '';
+      const zonaComercial = clientData.zona_comercial || clientData.region || clientData.zona || '';
+      const route = routeName || clientData.sales_route || clientData.ruta || clientData.internal_route || '';
+
+      setForm((prev) => ({
+        ...prev,
+        client_id: clientData.id || prev.client_id,
+        client_code: clientData.client_code || clientData.code || prev.client_code,
+        nivel: clientData.level || clientData.type || prev.nivel,
+        puntoVenta: prev.puntoVenta || displayName,
+        zona: prev.zona || zonaComercial,
+        ruta: route || prev.ruta,
+        client_type: (t || prev.client_type || '').toUpperCase()
+      }));
+    };
+
+    if (embeddedClient) {
+      applyClientToForm(embeddedClient);
+    }
+
     if (!cId) return;
 
     let active = true;
     (async () => {
       setLoading(true);
       try {
-        const clientData = await getClientById(cId);
+        const clientData = (await getClientById(cId)) || embeddedClient;
         if (clientData && active) {
           const t = (clientData.client_type || clientData.level || clientData.type || '').toString();
-          const displayName = clientData.business_name || clientData.name || '';
-          const zonaComercial = clientData.zona_comercial || clientData.region || clientData.zona || '';
-          const route = routeName || clientData.sales_route || clientData.ruta || '';
-
-          setForm((prev) => ({
-            ...prev,
-            client_id: clientData.id,
-            client_code: clientData.client_code || prev.client_code,
-            nivel: clientData.level || clientData.type || prev.nivel,
-            puntoVenta: prev.puntoVenta || displayName,
-            zona: prev.zona || zonaComercial,
-            ruta: route || prev.ruta,
-            client_type: (t || prev.client_type || '').toUpperCase()
-          }));
+          applyClientToForm(clientData);
 
           // Coordenadas
           const cLat = parseFloat(clientData.lat);

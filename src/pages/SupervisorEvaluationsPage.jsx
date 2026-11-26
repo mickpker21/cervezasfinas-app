@@ -100,6 +100,17 @@ const PAGE_SIZE = 50;
 const strip = (s) => (s ?? '').toString().trim();
 const norm = (s) => strip(s).toUpperCase();
 const clientCodeKey = (s) => norm(strip(s)).replace(/[^A-Z0-9]/g, '');
+const safeFormatEvalDate = (fechaVal) => {
+  if (!fechaVal) return '---';
+  try {
+    const raw = String(fechaVal).trim();
+    const d = new Date(raw.includes(' ') && !raw.includes('T') ? raw.replace(' ', 'T') : raw);
+    if (Number.isNaN(d.getTime())) return raw.slice(0, 16);
+    return format(d, 'dd/MM/yyyy HH:mm');
+  } catch {
+    return String(fechaVal).slice(0, 16);
+  }
+};
 const buildIn = (col, arr) => `${col}.in.(${arr.map((v) => `"${String(v).replaceAll('"', '\\"')}"`).join(',')})`;
 
 export default function SupervisorEvaluationsPage() {
@@ -866,7 +877,7 @@ export default function SupervisorEvaluationsPage() {
                   const photosStr = photos.map(p => fixUrl(p)).join(', ');
 
                   return {
-                    Fecha: format(new Date(ev.fecha), 'dd/MM/yyyy HH:mm'),
+                    Fecha: safeFormatEvalDate(ev.fecha),
                     'Punto de Venta': ev.punto_venta,
                     'Código': ev.client_code || '',
                     Zona: (ev.zona || '').toUpperCase(),
@@ -1251,7 +1262,7 @@ export default function SupervisorEvaluationsPage() {
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <p className="text-white font-semibold text-sm">{ev.punto_venta}</p>
-                          <p className="text-xs text-slate-400">{format(new Date(ev.fecha), 'dd/MM/yyyy HH:mm')}</p>
+                          <p className="text-xs text-slate-400">{safeFormatEvalDate(ev.fecha)}</p>
                         </div>
                         <span className={`px-2 py-1 rounded text-xs font-bold ${getScoreColor(ev.puntaje)} bg-slate-800 border border-slate-600`}>
                           {typeof ev.puntaje === 'number' ? ev.puntaje.toFixed(2) : 'N/A'}
@@ -1329,7 +1340,7 @@ export default function SupervisorEvaluationsPage() {
                           className="border-b border-slate-700 hover:bg-slate-700/50 transition-colors"
                         >
                           <td className="p-3 text-slate-200">
-                            {format(new Date(ev.fecha), 'dd/MM/yyyy HH:mm')}
+                            {safeFormatEvalDate(ev.fecha)}
                           </td>
                           <td className="p-3 text-white">{ev.punto_venta}</td>
                           <td className="p-3 text-slate-300">{ev.client_code || 'Sin código'}</td>

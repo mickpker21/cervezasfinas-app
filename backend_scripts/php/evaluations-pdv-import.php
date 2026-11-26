@@ -1,5 +1,6 @@
 <?php
 // backend_scripts/php/evaluations-pdv-import.php
+date_default_timezone_set('America/Mexico_City');
 include_once 'db.php';
 
 header('Content-Type: application/json');
@@ -15,6 +16,36 @@ $rows = $input['evaluations'] ?? [];
 if (empty($rows)) {
     echo json_encode(['message' => 'No data', 'processed' => 0]);
     exit;
+}
+
+function normEvalDatePdv($val) {
+    if (empty($val)) return date('Y-m-d');
+    $s = trim((string)$val);
+    if (preg_match('/^\d{4}-\d{2}-\d{2}/', $s)) {
+        return substr($s, 0, 10);
+    }
+    try {
+        $dt = new DateTime($s);
+        $dt->setTimezone(new DateTimeZone('America/Mexico_City'));
+        return $dt->format('Y-m-d');
+    } catch (Exception $e) {
+        return date('Y-m-d');
+    }
+}
+
+function normEvalDateTimePdv($val) {
+    if (empty($val)) return date('Y-m-d H:i:s');
+    $s = trim((string)$val);
+    if (preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/', $s)) {
+        return strlen($s) === 16 ? str_replace('T', ' ', $s) . ':00' : str_replace('T', ' ', $s);
+    }
+    try {
+        $dt = new DateTime($s);
+        $dt->setTimezone(new DateTimeZone('America/Mexico_City'));
+        return $dt->format('Y-m-d H:i:s');
+    } catch (Exception $e) {
+        return date('Y-m-d H:i:s');
+    }
 }
 
 $stmt = $pdo->prepare("
@@ -34,15 +65,19 @@ $errors = [];
 
 foreach ($rows as $row) {
     try {
+        $rawClientId = $row['client_id'] ?? ($row['payload']['client_id'] ?? ($row['payload']['client_code'] ?? 0));
+        $digits = preg_replace('/[^0-9]/', '', (string)$rawClientId);
+        $safeClientId = ($digits !== '' && is_numeric($digits)) ? (int)$digits : 0;
+
         $stmt->execute([
             ':id' => $row['id'],
-            ':client_id' => $row['client_id'],
-            ':user_id' => $row['user_id'] ?? null,
-            ':fecha' => $row['fecha'],
-            ':puntaje_total' => $row['puntaje_total'] ?? 0,
-            ':surtido_porcentaje' => $row['surtido_porcentaje'] ?? 0,
-            ':payload' => json_encode($row['payload'] ?? $row), // Store full object if payload missing
-            ':created_at' => $row['created_at'] ?? date('Y-m-d H:i:s')
+            ':client_id' => $safeClientId,
+            ':user_id' => $row['user_id'] ?? ($row['payload']['user_id'] ?? null),
+            ':fecha' => normEvalDatePdv($row['fecha'] ?? null),
+            ':puntaje_total' => (float)($row['puntaje_total'] ?? ($row['payload']['puntaje_total'] ?? 0)),
+            ':surtido_porcentaje' => (float)($row['surtido_porcentaje'] ?? ($row['payload']['surtido_porcentaje'] ?? 0)),
+            ':payload' => is_string($row['payload'] ?? null) ? $row['payload'] : json_encode($row['payload'] ?? $row),
+            ':created_at' => normEvalDateTimePdv($row['created_at'] ?? null)
         ]);
         $processed++;
     } catch (PDOException $e) {

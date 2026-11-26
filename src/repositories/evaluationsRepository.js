@@ -3,10 +3,7 @@ import { isOnline } from '@/lib/network';
 // import { supabase } from '@/supabaseClient'; // REMOVED: Migration to MySQL
 import { fileToBase64 } from '@/lib/fileUtils';
 import { importEvaluationsPDVApi, importEvaluationsCMApi } from '@/lib/mysqlEvaluations';
-
-/**
- * Helper para subir fotos si hay internet, o retornar null si falla.
- */
+import { getTodayMexico, getNowMexico } from '@/lib/dateUtils';
 import { uploadPhoto } from '@/lib/uploadService';
 
 async function uploadPhotoIfOnline(file, bucket, path) {
@@ -16,11 +13,75 @@ async function uploadPhotoIfOnline(file, bucket, path) {
 }
 
 /**
+ * Normaliza una fila de evaluación (PDV o Canal Moderno) para que las columnas
+ * estrictas de MySQL (client_id/tienda_id INT NOT NULL, fecha DATE, created_at TIMESTAMP)
+ * jamás rechacen el INSERT por valores nulos, UUIDs o strings ISO con 'T'/'Z'.
+ */
+export function sanitizeEvalForMySQL(rawRow, isCM = false) {
+  const row = { ...(rawRow || {}) };
+  let payload = row.payload;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+      if (typeof payload === 'string') payload = JSON.parse(payload);
+    } catch {
+      payload = {};
+    }
+  } else {
+    payload = { ...(payload || {}) };
+  }
+
+  delete row.photo_files;
+  delete payload.photo_files;
+
+  const rawIdCandidate = isCM
+    ? (row.tienda_id ?? row.client_id ?? payload.tienda_id ?? payload.client_id ?? payload.client_code ?? payload.storeInfo?.client_code)
+    : (row.client_id ?? payload.client_id ?? payload.client_code ?? payload.cve_cliente);
+
+  const numericId = parseInt(String(rawIdCandidate ?? '').replace(/[^0-9]/g, ''), 10);
+  const safeIntId = Number.isFinite(numericId) && numericId > 0 ? numericId : 0;
+
+  // Normalizar fecha a YYYY-MM-DD (columna DATE en MySQL)
+  const rawFecha = String(row.fecha || payload.fecha || payload.storeInfo?.fecha || getTodayMexico()).trim();
+  const safeFecha = /^\d{4}-\d{2}-\d{2}/.test(rawFecha) ? rawFecha.slice(0, 10) : getTodayMexico();
+
+  // Normalizar created_at a YYYY-MM-DD HH:mm:ss (columna TIMESTAMP en MySQL, sin 'T' ni 'Z')
+  const rawCreated = String(row.created_at || getNowMexico()).trim();
+  let safeCreatedAt = getNowMexico();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(rawCreated)) {
+    safeCreatedAt = rawCreated.slice(0, 19).replace('T', ' ');
+  }
+
+  if (isCM) {
+    return {
+      ...row,
+      tienda_id: safeIntId,
+      fecha: safeFecha,
+      tipo: row.tipo || payload.tipo || 'Canal Moderno',
+      payload,
+      created_at: safeCreatedAt,
+    };
+  }
+
+  return {
+    ...row,
+    client_id: safeIntId,
+    user_id: row.user_id || payload.user_id || null,
+    fecha: safeFecha,
+    puntaje_total: Number(row.puntaje_total ?? payload.puntaje_total ?? payload.score ?? 0) || 0,
+    surtido_porcentaje: Number(row.surtido_porcentaje ?? payload.surtido_porcentaje ?? 0) || 0,
+    payload,
+    created_at: safeCreatedAt,
+  };
+}
+
+/**
  * Crea una evaluación PDV
  */
 export async function createEvaluationPDV(evaluation) {
   const online = await isOnline();
-  const now = new Date().toISOString();
+  const now = getNowMexico();
+  const today = getTodayMexico();
 
   // Asegurar ID
   if (!evaluation.id) {
@@ -32,21 +93,19 @@ export async function createEvaluationPDV(evaluation) {
   const cleanEvaluation = { ...evaluation };
   delete cleanEvaluation.photo_files;
 
-  // Estructura para MySQL
-  // MySQL espera: id, client_id, user_id, fecha, puntaje_total, surtido_porcentaje, payload, created_at
-  // El payload debe contener todo lo demás.
   const payload = { ...cleanEvaluation };
+  delete payload.photo_files;
 
-  const row = {
+  const row = sanitizeEvalForMySQL({
     id: cleanEvaluation.id,
     client_id: cleanEvaluation.client_id,
     user_id: cleanEvaluation.user_id,
-    fecha: cleanEvaluation.fecha || now,
+    fecha: cleanEvaluation.fecha || today,
     puntaje_total: cleanEvaluation.puntaje_total || 0,
     surtido_porcentaje: cleanEvaluation.surtido_porcentaje || 0,
     payload: payload,
     created_at: now
-  };
+  }, false);
 
   if (online) {
     // Phase 1: Upload photos (independent of DB)
@@ -337,11 +396,11 @@ export async function getAllEvaluations(dateParams = {}) {
 
       // Descarga en paralelo PDV y Canal Moderno para reducir a la mitad el tiempo de red
       const [pdvRows, cmRows] = await Promise.all([
-        fetchEvaluationsPDVApi({ limit: 5000, ...apiParams }).catch((e) => {
+        fetchEvaluationsPDVApi({ limit: 1500, ...apiParams }).catch((e) => {
           console.warn('[evaluationsRepository] PDV fetch warning:', e);
           return [];
         }),
-        fetchEvaluationsCMApi({ limit: 5000, ...apiParams }).catch((e) => {
+        fetchEvaluationsCMApi({ limit: 1500, ...apiParams }).catch((e) => {
           console.warn('[evaluationsRepository] CM fetch warning:', e);
           return [];
         }),
@@ -449,14 +508,14 @@ export async function updateEvaluationAdmin(evalItem, updates = {}) {
   }
 
   if (isCM) {
-    const cmRow = {
+    const cmRow = sanitizeEvalForMySQL({
       id: realId,
-      tienda_id: evalItem.client_id || basePayload.tienda_id || newClientCode || 'CM',
+      tienda_id: evalItem.client_id || basePayload.tienda_id || newClientCode || 0,
       fecha: newFecha,
       tipo: 'Canal Moderno',
       payload: updatedPayload,
       created_at: evalItem.created_at || newFecha,
-    };
+    }, true);
     await insertLocalEvaluationCM(cmRow, true);
     const res = await importEvaluationsCMApi([cmRow]);
     if (res?.errors?.length) {
@@ -464,9 +523,9 @@ export async function updateEvaluationAdmin(evalItem, updates = {}) {
     }
     return cmRow;
   } else {
-    const pdvRow = {
+    const pdvRow = sanitizeEvalForMySQL({
       id: realId,
-      client_id: evalItem.client_id || basePayload.client_id || newClientCode || 'PDV',
+      client_id: evalItem.client_id || basePayload.client_id || newClientCode || 0,
       user_id: basePayload.user_id || evalItem.user_id || null,
       fecha: newFecha,
       puntaje_total: newScore,
@@ -476,7 +535,7 @@ export async function updateEvaluationAdmin(evalItem, updates = {}) {
           : Number(basePayload.surtido_porcentaje) || 0,
       payload: updatedPayload,
       created_at: evalItem.created_at || newFecha,
-    };
+    }, false);
     await insertLocalEvaluationPDV(pdvRow, true);
     const res = await importEvaluationsPDVApi([pdvRow]);
     if (res?.errors?.length) {
@@ -621,21 +680,26 @@ async function loadLocalEvaluationsCM(dateParams = {}) {
 
 export async function createEvaluationCanalModerno(evaluation) {
   const online = await isOnline();
-  const now = new Date().toISOString();
+  const now = getNowMexico();
+  const today = getTodayMexico();
 
   const id = evaluation.id || crypto.randomUUID();
   const photoFiles = evaluation.photo_files || {};
   const cleanEvaluation = { ...evaluation };
   delete cleanEvaluation.photo_files;
+  if (cleanEvaluation.payload && typeof cleanEvaluation.payload === 'object') {
+    cleanEvaluation.payload = { ...cleanEvaluation.payload };
+    delete cleanEvaluation.payload.photo_files;
+  }
 
-  const row = {
+  const row = sanitizeEvalForMySQL({
     id: id,
     tienda_id: cleanEvaluation.tienda_id || cleanEvaluation.client_id,
-    fecha: cleanEvaluation.fecha || now,
+    fecha: cleanEvaluation.fecha || today,
     tipo: cleanEvaluation.tipo || 'Canal Moderno',
     payload: cleanEvaluation.payload || cleanEvaluation,
     created_at: cleanEvaluation.created_at || now,
-  };
+  }, true);
 
   if (online) {
     // Phase 1: Upload photos (independent of DB)

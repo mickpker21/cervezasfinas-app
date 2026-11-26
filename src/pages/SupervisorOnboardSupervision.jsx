@@ -1265,6 +1265,7 @@ export default function SupervisorOnboardSupervision() {
             ) : (
               <NuevaEvaluacion 
                 clientId={selectedClient?.id}
+                embeddedClient={selectedClient}
                 routeName={startForm.route_name}
                 hideRedirect={true}
                 onComplete={(evalData) => {

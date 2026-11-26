@@ -43,15 +43,22 @@ export async function importEvaluationsCMApi(evaluationsArray) {
     return await res.json();
 }
 
-/**
- * Reads PDV Evaluations from MySQL.
- */
+function buildCleanQuery(params = {}) {
+    const clean = {};
+    Object.entries(params || {}).forEach(([k, v]) => {
+        if (v !== null && v !== undefined && v !== '' && v !== 'null' && v !== 'undefined') {
+            clean[k] = v;
+        }
+    });
+    return new URLSearchParams(clean).toString();
+}
+
 /**
  * Reads PDV Evaluations from MySQL.
  */
 export async function fetchEvaluationsPDVApi(params = {}) {
-    const q = new URLSearchParams(params).toString();
-    const url = `${API_BASE}/evaluations-pdv-read.php?${q}`;
+    const q = buildCleanQuery(params);
+    const url = `${API_BASE}/evaluations-pdv-read.php${q ? `?${q}` : ''}`;
     const res = await resilientFetch(url);
     const json = await res.json();
     return Array.isArray(json) ? json : (json.rows || []);
@@ -61,8 +68,8 @@ export async function fetchEvaluationsPDVApi(params = {}) {
  * Reads Canal Moderno Evaluations from MySQL.
  */
 export async function fetchEvaluationsCMApi(params = {}) {
-    const q = new URLSearchParams(params).toString();
-    const url = `${API_BASE}/evaluations-read.php?${q}`;
+    const q = buildCleanQuery(params);
+    const url = `${API_BASE}/evaluations-read.php${q ? `?${q}` : ''}`;
     const res = await resilientFetch(url);
     const json = await res.json();
     return Array.isArray(json) ? json : (json.rows || []);
