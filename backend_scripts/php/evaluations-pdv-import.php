@@ -23,7 +23,9 @@ $stmt = $pdo->prepare("
     ) VALUES (
         :id, :client_id, :user_id, :fecha, :puntaje_total, :surtido_porcentaje, :payload, :created_at
     ) ON DUPLICATE KEY UPDATE
-        puntaje_total=VALUES(puntaje_total), surtido_porcentaje=VALUES(surtido_porcentaje),
+        fecha=VALUES(fecha),
+        puntaje_total=VALUES(puntaje_total),
+        surtido_porcentaje=VALUES(surtido_porcentaje),
         payload=VALUES(payload)
 ");
 

@@ -26,6 +26,8 @@ $stmt = $pdo->prepare("
     ) VALUES (
         :id, :tienda_id, :fecha, :tipo, :payload, :created_at
     ) ON DUPLICATE KEY UPDATE
+        fecha=VALUES(fecha),
+        tipo=VALUES(tipo),
         payload=VALUES(payload)
 ");
 

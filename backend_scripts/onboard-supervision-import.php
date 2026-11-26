@@ -49,6 +49,9 @@ try {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE 
                 supervisor_name = VALUES(supervisor_name),
+                route_name = VALUES(route_name),
+                vendedor_name = VALUES(vendedor_name),
+                start_at = VALUES(start_at),
                 end_at = VALUES(end_at),
                 checklist_data = VALUES(checklist_data),
                 status = VALUES(status),

@@ -1942,10 +1942,16 @@ export default function TeleventaClientHelpCenter() {
                                         <Input
                                             type="number"
                                             min="1"
-                                            value={it.quantity}
+                                            value={it.quantity ?? ''}
                                             onChange={e => {
+                                                const raw = e.target.value;
                                                 const next = [...editOrderItems];
-                                                next[idx].quantity = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                                next[idx].quantity = raw === '' ? '' : Math.max(0, parseInt(raw, 10) || 0);
+                                                setEditOrderItems(next);
+                                            }}
+                                            onBlur={() => {
+                                                const next = [...editOrderItems];
+                                                next[idx].quantity = Math.max(1, parseInt(next[idx].quantity, 10) || 1);
                                                 setEditOrderItems(next);
                                             }}
                                             className="w-16 h-8 text-xs bg-slate-900 border-slate-700 text-center"

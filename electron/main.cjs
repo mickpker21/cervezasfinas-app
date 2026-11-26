@@ -347,6 +347,14 @@ async function createWindow() {
     },
   });
 
+  mainWindow.on('focus', () => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+        mainWindow.webContents.focus();
+      }
+    } catch {}
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://wa.me') || url.startsWith('https://api.whatsapp.com') || url.startsWith('tel:')) {
       shell.openExternal(url);

@@ -29,16 +29,18 @@ import {
 } from 'date-fns';
 import { Link } from 'react-router-dom';
 import EvaluationDetailViewer from '@/components/EvaluationDetailViewer';
-import { getSalesBySku } from '@/repositories/salesRepository';
-import { getAllEvaluations, getEvaluationById } from '@/repositories/evaluationsRepository';
+import { getAllEvaluations, getEvaluationById, updateEvaluationAdmin } from '@/repositories/evaluationsRepository';
 import { getAllSupervisions, syncOnboardSupervisions } from '@/repositories/onboardSupervisionRepository';
-import { getClientsPaged } from '@/repositories/clientsRepository';
+import { getClientsPaged, loadClientsFromLocal } from '@/repositories/clientsRepository';
 import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
+import { useToast } from '@/components/ui/use-toast';
 import { kvStorage } from '@/services/kvStorage';
-import { ClipboardCheck, TrendingUp, Award, Users, MapPin, Filter, BarChart3 } from 'lucide-react';
+import { ClipboardCheck, TrendingUp, Award, Users, MapPin, Filter, BarChart3, Pencil, Loader2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { motion, AnimatePresence } from 'framer-motion';
 import Papa from 'papaparse';
+
+let cachedEvalClients = null;
 
 const StatsSkeleton = () => (
   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -102,17 +104,17 @@ const buildIn = (col, arr) => `${col}.in.(${arr.map((v) => `"${String(v).replace
 
 export default function SupervisorEvaluationsPage() {
   const { user } = useSupabaseAuth();
+  const { toast } = useToast();
   const role = (user?.user_metadata?.type || user?.user_metadata?.role || user?.user_metadata?.user_type || '').toLowerCase();
   const isSupervisor = role === 'supervisor' || role === 'coortrade';
   const isAnalista = ['analista', 'analyst', 'admin', 'gerente', 'coortrade', 'coordinador', 'jefe', 'director'].includes(role);
-  const canAccessFullData = isAnalista; // Analysts and high-level roles see everything
+  const isAdminUser = ['admin', 'analista', 'analyst', 'gerente', 'director'].includes(role);
+  const canAccessFullData = isAnalista;
 
-  const [evaluations, setEvaluations] = useState([]); // Evaluaciones paginadas (para mostrar en tabla)
-  const [allFilteredEvaluations, setAllFilteredEvaluations] = useState([]); // TODAS las evaluaciones filtradas (para estadísticas)
-  const [allFilteredSupervisions, setAllFilteredSupervisions] = useState([]); // Supervisiones a bordo
+  const [rawEvaluations, setRawEvaluations] = useState([]);
+  const [rawSupervisions, setRawSupervisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
@@ -121,22 +123,52 @@ export default function SupervisorEvaluationsPage() {
   const [customMonth, setCustomMonth] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [selectedZone, setSelectedZone] = useState(null);
+  const [selectedRoute, setSelectedRoute] = useState(null);
   const [allowedRoutes, setAllowedRoutes] = useState({ internal: [], sales: [] });
 
-  // Catálogo de clientes
-  const [clients, setClients] = useState([]);
+  // Estado de edición para Admin
+  const [editingEvaluation, setEditingEvaluation] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    punto_venta: '',
+    client_code: '',
+    ruta: '',
+    zona: '',
+    usuario: '',
+    fecha: '',
+    puntaje: 0,
+    surtido_porcentaje: 0,
+    observaciones: '',
+  });
+
+  // Catálogo de clientes (con caché en memoria y carga local instantánea primero)
+  const [clients, setClients] = useState(() => cachedEvalClients || []);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const res = await getClientsPaged({ page: 1, pageSize: 50000 });
-        const all = res?.data || res?.rows || [];
-        if (!active) return;
-        console.log('[SupervisorEvaluations] Loaded Clients Catalog:', all?.length || 0);
-        setClients(all || []);
+        if (cachedEvalClients && cachedEvalClients.length > 0) {
+          setClients(cachedEvalClients);
+          return;
+        }
+        // 1. Carga local rápida (<50ms)
+        const localRows = await loadClientsFromLocal().catch(() => []);
+        if (active && localRows?.length > 0) {
+          cachedEvalClients = localRows;
+          setClients(localRows);
+        }
+        // 2. Si local está vacío, traer catálogo paginado
+        if (!localRows || localRows.length === 0) {
+          const res = await getClientsPaged({ page: 1, pageSize: 50000 });
+          const all = res?.data || res?.rows || [];
+          if (active && all.length > 0) {
+            cachedEvalClients = all;
+            setClients(all);
+          }
+        }
       } catch (e) {
-        if (active) setClients([]);
+        if (active && !cachedEvalClients) setClients([]);
       }
     })();
     return () => { active = false; };
@@ -166,17 +198,13 @@ export default function SupervisorEvaluationsPage() {
     return map;
   }, [clients]);
 
-  // Cargar rutas permitidas del supervisor
   const fetchAllowedRoutes = useCallback(async () => {
     if (!user || !isSupervisor) return;
-
     try {
       const { getAllowedRoutes } = await import('@/repositories/metadataRepository');
       const routesObj = await getAllowedRoutes(user.id);
-
       const internal = routesObj.internal || [];
       const sales = routesObj.sales || [];
-
       if (internal.length > 0 || sales.length > 0) {
         const newVal = { internal, sales };
         setAllowedRoutes(newVal);
@@ -187,13 +215,6 @@ export default function SupervisorEvaluationsPage() {
 
   useEffect(() => { fetchAllowedRoutes(); }, [fetchAllowedRoutes]);
 
-  // Estabilizar allowedRoutes para evitar re-renders
-  const stableAllowedRoutes = useMemo(() => allowedRoutes, [
-    JSON.stringify(allowedRoutes.internal.sort()),
-    JSON.stringify(allowedRoutes.sales.sort())
-  ]);
-
-  // Mapa por ID para búsqueda robusta
   const clientsById = useMemo(() => {
     const map = new Map();
     for (const c of clients || []) {
@@ -202,12 +223,12 @@ export default function SupervisorEvaluationsPage() {
     return map;
   }, [clients]);
 
-  // Debounce búsqueda
+  // Debounce búsqueda rápida (250ms)
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
       setPage(1);
-    }, 500);
+    }, 250);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
@@ -252,334 +273,334 @@ export default function SupervisorEvaluationsPage() {
     }
   }, [dateRange, customMonth]);
 
+  // Carga rápida local-first + sincronización en paralelo desde el servidor
+  // Solo depende de startDate y endDate (no se re-ejecuta al paginar ni al cargar clientes)
   const fetchEvaluations = useCallback(async () => {
     setLoading(true);
     try {
-      const allEvals = await getAllEvaluations({ from: startDate, to: endDate });
-      console.log('[SupervisorPage] Total Evals Loaded:', allEvals.length);
-      console.log('[SupervisorPage] Breakdown:', {
-        PDV: allEvals.filter(e => e.tipo === 'PDV').length,
-        CM: allEvals.filter(e => e.tipo !== 'PDV').length
-      });
-
-      let filtered = allEvals;
-
-      if (startDate) {
-        const beforeDate = filtered.length;
-        filtered = filtered.filter(e => e.fecha >= startDate);
-        console.log(`[SupervisorPage] Date Filter (>= ${startDate}): Dropped ${beforeDate - filtered.length} items`);
-      }
-      if (endDate) {
-        filtered = filtered.filter(e => e.fecha <= endDate);
+      // 1. Pintar caché local al instante (<100ms) si ya hay datos en el dispositivo
+      const [localEvals, localSups] = await Promise.all([
+        getAllEvaluations({ from: startDate, to: endDate, localOnly: true }).catch(() => []),
+        getAllSupervisions('all').catch(() => []),
+      ]);
+      if ((localEvals && localEvals.length > 0) || (localSups && localSups.length > 0)) {
+        setRawEvaluations(localEvals || []);
+        setRawSupervisions(localSups || []);
+        setLoading(false);
       }
 
-      const typeBefore = filtered.length;
-      if (typeFilter !== 'all') {
-        const tf = typeFilter === 'pdv' ? 'PDV' : 'CANAL MODERNO';
-        filtered = filtered.filter(e => (e.tipo || '').toUpperCase() === tf || (tf === 'CANAL MODERNO' && e.tipo === 'CC'));
-        console.log(`[SupervisorPage] Type Filter (${typeFilter}): Dropped ${typeBefore - filtered.length} items`);
-      }
+      // 2. Sincronizar en paralelo Evaluaciones (PDV + CM) y Supervisiones a Bordo desde MySQL
+      const [freshEvals] = await Promise.all([
+        getAllEvaluations({ from: startDate, to: endDate }),
+        syncOnboardSupervisions('all').catch(() => ({ count: 0 })),
+      ]);
+      const freshSups = await getAllSupervisions('all').catch(() => localSups || []);
 
-      if (debouncedSearchTerm) {
-        const term = debouncedSearchTerm.toLowerCase();
-        filtered = filtered.filter(e =>
-          (e.punto_venta || '').toLowerCase().includes(term) ||
-          (e.client_code || '').toLowerCase().includes(term) ||
-          (e.evaluator_name || '').toLowerCase().includes(term)
-        );
-      }
-
-      const zoneByCode = {};
-      try {
-        const wantedCodes = new Set(
-          filtered.map((ev) => strip(ev.client_code)).filter(Boolean),
-        );
-        if (wantedCodes.size > 0) {
-          const ventasRows = await getSalesBySku({
-            from: startDate || undefined,
-            to: endDate || undefined,
-          });
-          (ventasRows || []).forEach((r) => {
-            const code = strip(r.cve_cliente);
-            const zona = strip(r.zona);
-            if (!code || !zona) return;
-            if (!wantedCodes.has(code)) return;
-            if (!zoneByCode[code]) zoneByCode[code] = zona;
-          });
-        }
-      } catch (e) {
-        console.error('SupervisorEvaluationsPage: error leyendo zonas', e);
-      }
-
-      const withZoneAndRoute = filtered.map((ev) => {
-        let rawCode = strip(ev.client_code);
-
-        // Fallback: Si no tiene codigo, buscarlo por client_id
-        if (!rawCode && ev.client_id && clientsById.has(ev.client_id)) {
-          const c = clientsById.get(ev.client_id);
-          rawCode = strip(c.client_code || c.code);
-        }
-
-        // Helper para limpiar strings inválidos
-        const cleanRoute = (r) => {
-          const s = (r || '').toString().trim();
-          if (!s) return null;
-          const upper = s.toUpperCase();
-          if (upper === 'SIN RUTA' || upper === 'SIN_RUTA' || upper === 'N/A' || upper === 'NA') return null;
-          return s;
-        };
-
-        // Buscar datos adicionales en el catálogo de clientes primero (Source of Truth)
-        let foundClient = null;
-        if (rawCode) {
-          const key = clientCodeKey(rawCode);
-          foundClient = clientsByKey.get(key);
-        }
-        if (!foundClient && ev.client_id) {
-          foundClient = clientsById.get(ev.client_id);
-        }
-
-        // Priorizar zona del catálogo si el cliente existe
-        let zona = null;
-        if (foundClient) {
-          zona = strip(foundClient.zona_comercial || foundClient.region || foundClient.zona) || null;
-        }
-
-        // Fallback: Priorizar la zona que ya viene en la evaluación (desde el repositorio)
-        if (!zona) zona = ev.zona;
-        
-        // Fallback 2: Usar zona detectada por ventas si aún no hay zona
-        if (!zona) zona = (rawCode && zoneByCode[rawCode] ? zoneByCode[rawCode] : null);
-
-        // Limpieza estricta de la ruta que viene de la evaluación
-        let rutaFinal = cleanRoute(ev.ruta);
-
-        // Canal Moderno specific debug
-        if (ev.tipo === 'Canal Moderno' || ev.tipo === 'CC') {
-          // Verificamos si encontramos al cliente
-          const found = clientsById.get(ev.client_id) || (rawCode ? clientsByKey.get(clientCodeKey(rawCode)) : null);
-          if (!found && !ev.ruta) {
-            console.warn('[SupervisorEvaluations][CM] Client not found for CM Evaluation:', {
-              id: ev.id,
-              client_id: ev.client_id,
-              client_code: ev.client_code,
-              rawCode,
-              tienda_id: ev.tienda_id // Extra field often used in CM
-            });
-          }
-        }
-
-        // Buscar datos adicionales en el catálogo de clientes
-        let internal_route = null;
-        let sales_route = null;
-
-        if (foundClient) {
-          const c = foundClient;
-
-          // DEBUG: Ver por qué no jala la ruta
-          if (!ev.ruta || ev.ruta === 'Sin ruta') {
-            console.log(`[SupervisorEvaluations] Client Lookup Match for ${ev.client_id} / ${rawCode}:`, {
-              name: c.name || c.business_name,
-              sales_route: c.sales_route,
-              ruta: c.ruta,
-              route: c.route,
-              internal_route: c.internal_route,
-              address: c.address
-            });
-          }
-
-          // Si no teníamos zona, intentar sacarla del cliente
-          // internal_route y sales_route del catálogo
-          internal_route = strip(c.internal_route);
-          sales_route = strip(c.sales_route);
-
-          const rutaFromClient = cleanRoute(
-            c.sales_route ||
-            c.ruta ||
-            c.internal_route ||
-            c.route
-          );
-
-          // Si no teníamos ruta válida, usar la del cliente
-          if (!rutaFinal && rutaFromClient) {
-            rutaFinal = rutaFromClient;
-          }
-
-          // Si el nombre del evaluation era genérico, usar el del cliente
-          if (ev.punto_venta === 'PDV' || !ev.punto_venta) {
-            ev.punto_venta = c.address || c.business_name || c.name || 'PDV';
-          }
-        } else {
-          // DEBUG: Lookup Failed
-          if (!ev.ruta || ev.ruta === 'Sin ruta') {
-            console.warn(`[SupervisorEvaluations] FAIL: Could not find client for ID: ${ev.client_id} / Code: ${rawCode}`);
-
-            // INTENTO DESESPERADO: Búsqueda lineal para ver si existe con otro formato
-            if (rawCode && clients.length > 0) {
-              const looseMatch = clients.find(c => c.client_code == rawCode || c.code == rawCode);
-              if (looseMatch) {
-                console.error(`[SupervisorEvaluations] FOUND VIA LINEAR SEARCH! Map Key Mismatch?`, {
-                  searchCode: rawCode,
-                  generatedKey: clientCodeKey(rawCode),
-                  foundClientCode: looseMatch.client_code,
-                  foundClientKey: clientCodeKey(looseMatch.client_code || looseMatch.code)
-                });
-              } else {
-                console.error(`[SupervisorEvaluations] DEFINITELY NOT IN LIST. Searched ${clients.length} clients.`);
-              }
-            }
-          }
-        }
-
-        // Final fallback para que no quede null/undefined visualmente
-        if (!rutaFinal) rutaFinal = 'Sin ruta';
-
-        return {
-          ...ev,
-          zona,
-          ruta: rutaFinal,
-          internal_route,
-          sales_route,
-        };
-      });
-
-      // Filtrar por rutas permitidas del supervisor
-      let finalFiltered = withZoneAndRoute;
-      /*
-      if (isSupervisor && (stableAllowedRoutes.internal.length > 0 || stableAllowedRoutes.sales.length > 0)) {
-        const beforeRouteFilter = finalFiltered.length;
-        finalFiltered = withZoneAndRoute.filter((ev) => {
-          const inInternal = stableAllowedRoutes.internal.length
-            ? stableAllowedRoutes.internal.includes(ev.internal_route)
-            : false;
-          const inSales = stableAllowedRoutes.sales.length
-            ? stableAllowedRoutes.sales.includes(ev.sales_route)
-            : false;
-          return inInternal || inSales;
-        });
-        console.log(`[SupervisorPage] Route Filter Dropped: ${beforeRouteFilter - finalFiltered.length} items`);
-      }
-      */
-
-      // Build dynamic zone map from evaluated clients (Extremely accurate)
-      const dynamicZoneMap = new Map(zoneByRouteMap);
-      finalFiltered.forEach(ev => {
-        const r = norm(strip(ev.ruta));
-        let z = strip(ev.zona);
-        if (!z || z === 'SIN ZONA') {
-          const matchedClient = clientsByKey.get(clientCodeKey(ev.client_code));
-          if (matchedClient) z = strip(matchedClient.zona_comercial || matchedClient.region || matchedClient.zona);
-        }
-        if (r && z && z !== 'SIN_ZONA' && z !== 'SIN ZONA') {
-          dynamicZoneMap.set(r, z);
-          // Also set without leading zeros just in case
-          if (r.startsWith('0')) dynamicZoneMap.set(r.replace(/^0+/, ''), z);
-          // And set with padded zero
-          if (r.length === 1) dynamicZoneMap.set('0' + r, z);
-        }
-      });
-
-      // Fetch Onboard Supervisions for unified average (Fetching 'all' to show zone-wide stats)
-      let finalSups = [];
-      try {
-        // Sync FIRST and AWAIT so that local DB has fresh data before reading
-        // (previously this was fire-and-forget, causing empty results on first load)
-        try {
-          const syncResult = await syncOnboardSupervisions('all');
-          console.log('[SupervisorPage] Onboard sync result:', syncResult);
-        } catch (syncErr) {
-          console.warn('[SupervisorPage] Onboard sync failed (offline?), reading from local cache:', syncErr?.message || syncErr);
-        }
-        
-        const rawSups = await getAllSupervisions('all');
-        console.log('[SupervisorPage] getAllSupervisions returned:', rawSups.length, 'records');
-        finalSups = rawSups;
-        if (startDate) {
-          const startD = new Date(startDate);
-          const endD = endDate ? new Date(endDate) : new Date();
-          endD.setHours(23, 59, 59, 999);
-          finalSups = rawSups.filter(s => {
-            if (!s.start_at) return false;
-            const d = new Date(s.start_at);
-            return d >= startD && d <= endD;
-          });
-        }
-        // Map Zones via robust client visitation logic
-        finalSups = finalSups.map(s => {
-          let foundZona = null;
-          
-          // Strategy 1: Reverse-lookup from actual visited clients (Accurate O(1) based)
-          if (s.visits && Array.isArray(s.visits)) {
-             for (const v of s.visits) {
-                if (v.client_code) {
-                   const matchedClient = clientsByKey.get(clientCodeKey(v.client_code));
-                    if (matchedClient) {
-                       foundZona = strip(matchedClient.zona_comercial || matchedClient.region || matchedClient.zona);
-                       if (foundZona) break;
-                    }
-                }
-             }
-          }
-          
-          // Strategy 2: Fallback to loose route string matching
-          if (!foundZona) {
-            const searchRutaKey = norm(strip(s.route_name));
-            if (searchRutaKey) {
-               foundZona = dynamicZoneMap.get(searchRutaKey);
-               
-               // Soft fallback if exact match fails
-               if (!foundZona) {
-                 for (const [route, zona] of dynamicZoneMap.entries()) {
-                   if (route === searchRutaKey || route.includes(searchRutaKey) || searchRutaKey.includes(route)) {
-                     foundZona = zona;
-                     break;
-                   }
-                 }
-               }
-            }
-          }
-
-          return { ...s, zona: foundZona || 'SIN ZONA', ruta: strip(s.route_name) || 'SIN RUTA' };
-        });
-      } catch (e) { console.error('Error fetching onboard supervisions', e); }
-
-      setAllFilteredSupervisions(finalSups);
-
-      const total = finalFiltered.length;
-      setTotalCount(total);
-
-      // Guardar TODAS las evaluaciones filtradas para las estadísticas
-      setAllFilteredEvaluations(finalFiltered);
-
-      const from = (page - 1) * PAGE_SIZE;
-      const pageData = finalFiltered.slice(from, from + PAGE_SIZE);
-
-      // Guardar solo la página actual para la tabla
-      setEvaluations(pageData);
+      setRawEvaluations(freshEvals || []);
+      setRawSupervisions(freshSups || []);
     } catch (err) {
       console.error('Error fetching evaluations:', err);
-      setEvaluations([]);
-      setAllFilteredEvaluations([]);
-      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, [
-    page,
-    debouncedSearchTerm,
-    startDate,
-    endDate,
-    typeFilter,
-    clientsByKey,
-    zoneByRouteMap,
-    clients,
-    stableAllowedRoutes,
-    isSupervisor,
-  ]);
+  }, [startDate, endDate]);
 
   useEffect(() => {
     fetchEvaluations();
   }, [fetchEvaluations]);
+
+  // Enriquecimiento y filtrado en memoria (0ms al filtrar, buscar o cambiar página)
+  const {
+    baseFilteredEvaluations,
+    baseFilteredSupervisions,
+    allFilteredEvaluations,
+    allFilteredSupervisions,
+    availableZones,
+    availableRoutes,
+  } = useMemo(() => {
+    let filtered = rawEvaluations || [];
+
+    if (startDate) {
+      filtered = filtered.filter((e) => String(e.fecha || '').slice(0, 10) >= startDate);
+    }
+    if (endDate) {
+      filtered = filtered.filter((e) => String(e.fecha || '').slice(0, 10) <= endDate);
+    }
+
+    if (typeFilter !== 'all') {
+      const tf = typeFilter === 'pdv' ? 'PDV' : 'CANAL MODERNO';
+      filtered = filtered.filter(
+        (e) =>
+          (e.tipo || '').toUpperCase() === tf ||
+          (tf === 'CANAL MODERNO' && e.tipo === 'CC')
+      );
+    }
+
+    const cleanRoute = (r) => {
+      const s = (r || '').toString().trim();
+      if (!s) return null;
+      const upper = s.toUpperCase();
+      if (upper === 'SIN RUTA' || upper === 'SIN_RUTA' || upper === 'N/A' || upper === 'NA') return null;
+      return s;
+    };
+
+    // 1. Enriquecer PRIMERO con el catálogo de clientes para que Zona, Ruta y Nombre estén completos antes de buscar/filtrar
+    const withZoneAndRoute = filtered.map((ev) => {
+      let rawCode = strip(ev.client_code);
+      if (!rawCode && ev.client_id && clientsById.has(ev.client_id)) {
+        const c = clientsById.get(ev.client_id);
+        rawCode = strip(c.client_code || c.code);
+      }
+
+      let foundClient = null;
+      if (rawCode) {
+        foundClient = clientsByKey.get(clientCodeKey(rawCode));
+      }
+      if (!foundClient && ev.client_id) {
+        foundClient = clientsById.get(ev.client_id);
+      }
+
+      let zona = strip(ev.zona) || null;
+      if (!zona && foundClient) {
+        zona = strip(foundClient.zona_comercial || foundClient.region || foundClient.zona) || null;
+      }
+
+      let rutaFinal = cleanRoute(ev.ruta);
+      let internal_route = null;
+      let sales_route = null;
+      let puntoVentaFinal = ev.punto_venta;
+
+      if (foundClient) {
+        internal_route = strip(foundClient.internal_route);
+        sales_route = strip(foundClient.sales_route);
+        const rutaFromClient = cleanRoute(
+          foundClient.sales_route ||
+            foundClient.ruta ||
+            foundClient.internal_route ||
+            foundClient.route
+        );
+        if (!rutaFinal && rutaFromClient) {
+          rutaFinal = rutaFromClient;
+        }
+        if (puntoVentaFinal === 'PDV' || !puntoVentaFinal) {
+          puntoVentaFinal =
+            foundClient.address || foundClient.business_name || foundClient.name || 'PDV';
+        }
+      }
+
+      if (!zona && rutaFinal) {
+        zona = zoneByRouteMap.get(norm(rutaFinal)) || null;
+      }
+      if (!rutaFinal) rutaFinal = 'Sin ruta';
+
+      return {
+        ...ev,
+        client_code: rawCode || ev.client_code || '',
+        punto_venta: puntoVentaFinal,
+        zona: zona || 'SIN ZONA',
+        ruta: rutaFinal,
+        internal_route,
+        sales_route,
+      };
+    });
+
+    const dynamicZoneMap = new Map(zoneByRouteMap);
+    withZoneAndRoute.forEach((ev) => {
+      const r = norm(strip(ev.ruta));
+      let z = strip(ev.zona);
+      if (!z || z === 'SIN ZONA') {
+        const matchedClient = clientsByKey.get(clientCodeKey(ev.client_code));
+        if (matchedClient) z = strip(matchedClient.zona_comercial || matchedClient.region || matchedClient.zona);
+      }
+      if (r && z && z !== 'SIN_ZONA' && z !== 'SIN ZONA') {
+        dynamicZoneMap.set(r, z);
+        if (r.startsWith('0')) dynamicZoneMap.set(r.replace(/^0+/, ''), z);
+        if (r.length === 1) dynamicZoneMap.set('0' + r, z);
+      }
+    });
+
+    let finalSups = rawSupervisions || [];
+    if (startDate) {
+      finalSups = finalSups.filter((s) => {
+        if (!s.start_at) return false;
+        const dStr = String(s.start_at).slice(0, 10);
+        if (dStr < startDate) return false;
+        if (endDate && dStr > endDate) return false;
+        return true;
+      });
+    }
+
+    finalSups = finalSups.map((s) => {
+      let foundZona = null;
+      if (s.visits && Array.isArray(s.visits)) {
+        for (const v of s.visits) {
+          if (v.client_code) {
+            const matchedClient = clientsByKey.get(clientCodeKey(v.client_code));
+            if (matchedClient) {
+              foundZona = strip(matchedClient.zona_comercial || matchedClient.region || matchedClient.zona);
+              if (foundZona) break;
+            }
+          }
+        }
+      }
+      if (!foundZona) {
+        const searchRutaKey = norm(strip(s.route_name));
+        if (searchRutaKey) {
+          foundZona = dynamicZoneMap.get(searchRutaKey);
+          if (!foundZona) {
+            for (const [route, zona] of dynamicZoneMap.entries()) {
+              if (route === searchRutaKey || route.includes(searchRutaKey) || searchRutaKey.includes(route)) {
+                foundZona = zona;
+                break;
+              }
+            }
+          }
+        }
+      }
+      return { ...s, zona: foundZona || 'SIN ZONA', ruta: strip(s.route_name) || 'SIN RUTA' };
+    });
+
+    // 2. Aplicar búsqueda de texto sobre los datos ya enriquecidos
+    let searchedEvals = withZoneAndRoute;
+    let searchedSups = finalSups;
+    if (debouncedSearchTerm) {
+      const term = debouncedSearchTerm.toLowerCase();
+      searchedEvals = withZoneAndRoute.filter(
+        (e) =>
+          (e.punto_venta || '').toLowerCase().includes(term) ||
+          (e.client_code || '').toLowerCase().includes(term) ||
+          (e.evaluator_name || '').toLowerCase().includes(term) ||
+          (e.usuario || '').toLowerCase().includes(term) ||
+          (e.ruta || '').toLowerCase().includes(term) ||
+          (e.zona || '').toLowerCase().includes(term)
+      );
+      searchedSups = finalSups.filter(
+        (s) =>
+          (s.route_name || '').toLowerCase().includes(term) ||
+          (s.vendedor_name || '').toLowerCase().includes(term) ||
+          (s.supervisor_name || '').toLowerCase().includes(term) ||
+          (s.zona || '').toLowerCase().includes(term)
+      );
+    }
+
+    // Catálogo de zonas y rutas presentes en las evaluaciones actuales
+    const zonesSet = new Set();
+    const routesSet = new Set();
+    searchedEvals.forEach((e) => {
+      const z = (e.zona || 'SIN ZONA').toString().trim().toUpperCase();
+      const r = (e.ruta || 'SIN RUTA').toString().trim().toUpperCase();
+      if (z) zonesSet.add(z);
+      if (!selectedZone || selectedZone === 'TOTAL' || z === selectedZone) {
+        if (r) routesSet.add(r);
+      }
+    });
+    searchedSups.forEach((s) => {
+      const z = (s.zona || 'SIN ZONA').toString().trim().toUpperCase();
+      const r = (s.ruta || 'SIN RUTA').toString().trim().toUpperCase();
+      if (z) zonesSet.add(z);
+      if (!selectedZone || selectedZone === 'TOTAL' || z === selectedZone) {
+        if (r) routesSet.add(r);
+      }
+    });
+
+    // 3. Aplicar filtro de Zona y Ruta seleccionadas sobre la tabla/KPIs
+    let zoneRouteFilteredEvals = searchedEvals;
+    let zoneRouteFilteredSups = searchedSups;
+
+    if (selectedZone && selectedZone !== 'TOTAL') {
+      zoneRouteFilteredEvals = zoneRouteFilteredEvals.filter(
+        (e) => (e.zona || 'SIN ZONA').toString().trim().toUpperCase() === selectedZone
+      );
+      zoneRouteFilteredSups = zoneRouteFilteredSups.filter(
+        (s) => (s.zona || 'SIN ZONA').toString().trim().toUpperCase() === selectedZone
+      );
+    }
+
+    if (selectedRoute) {
+      zoneRouteFilteredEvals = zoneRouteFilteredEvals.filter(
+        (e) => (e.ruta || 'SIN RUTA').toString().trim().toUpperCase() === selectedRoute
+      );
+      zoneRouteFilteredSups = zoneRouteFilteredSups.filter(
+        (s) => (s.ruta || 'SIN RUTA').toString().trim().toUpperCase() === selectedRoute
+      );
+    }
+
+    return {
+      baseFilteredEvaluations: searchedEvals,
+      baseFilteredSupervisions: searchedSups,
+      allFilteredEvaluations: zoneRouteFilteredEvals,
+      allFilteredSupervisions: zoneRouteFilteredSups,
+      availableZones: Array.from(zonesSet).sort(),
+      availableRoutes: Array.from(routesSet).sort(),
+    };
+  }, [
+    rawEvaluations,
+    rawSupervisions,
+    startDate,
+    endDate,
+    typeFilter,
+    debouncedSearchTerm,
+    selectedZone,
+    selectedRoute,
+    clientsById,
+    clientsByKey,
+    zoneByRouteMap,
+  ]);
+
+  const totalCount = allFilteredEvaluations.length;
+  const evaluations = useMemo(() => {
+    const from = (page - 1) * PAGE_SIZE;
+    return allFilteredEvaluations.slice(from, from + PAGE_SIZE);
+  }, [allFilteredEvaluations, page]);
+
+  const openEditModal = (ev) => {
+    const payload = typeof ev.payload === 'string' ? JSON.parse(ev.payload || '{}') : (ev.payload || {});
+    const rawDate = String(ev.fecha || '').slice(0, 16).replace(' ', 'T');
+    setEditingEvaluation(ev);
+    setEditForm({
+      punto_venta: ev.punto_venta || '',
+      client_code: ev.client_code || '',
+      ruta: ev.ruta && ev.ruta !== 'Sin ruta' ? ev.ruta : (payload.ruta || ''),
+      zona: ev.zona || payload.zona || '',
+      usuario: ev.usuario || '',
+      fecha: rawDate || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+      puntaje: Number(ev.puntaje || 0),
+      surtido_porcentaje: Number(payload.surtido_porcentaje || 0),
+      observaciones: payload.observaciones || payload.comentarios || payload.notes || '',
+    });
+  };
+
+  const handleSaveEvaluationEdit = async (e) => {
+    if (e) e.preventDefault();
+    if (!editingEvaluation) return;
+    setSavingEdit(true);
+    try {
+      const normalizedFecha = editForm.fecha ? editForm.fecha.replace('T', ' ') : editingEvaluation.fecha;
+      await updateEvaluationAdmin(editingEvaluation, {
+        ...editForm,
+        fecha: normalizedFecha,
+        puntaje: Number(editForm.puntaje) || 0,
+        surtido_porcentaje: Number(editForm.surtido_porcentaje) || 0,
+      });
+
+      toast({
+        title: 'Evaluación actualizada',
+        description: `Se guardaron los cambios de ${editForm.punto_venta || editingEvaluation.id}.`,
+        className: 'bg-emerald-600 text-white border-none',
+      });
+      setEditingEvaluation(null);
+      await fetchEvaluations();
+    } catch (err) {
+      console.error('Error guardando edición de evaluación:', err);
+      toast({
+        title: 'Error al guardar',
+        description: err?.message || 'No se pudo actualizar la evaluación.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE) || 1);
 
@@ -622,21 +643,22 @@ export default function SupervisorEvaluationsPage() {
 
   const zoneStats = useMemo(() => {
     const map = new Map();
-    (allFilteredEvaluations || []).forEach((ev) => {
-      const z = (ev.zona || 'SIN ZONA').toString().trim().toUpperCase();
-      if (!z || z === 'SIN ZONA') return; // Skip "SIN ZONA" to replace it with Total
-      const cur = map.get(z) || { zona: z, total: 0, count: 0, supTotal: 0, supCount: 0 };
+    const evalList = baseFilteredEvaluations || [];
+    const supList = baseFilteredSupervisions || [];
+
+    evalList.forEach((ev) => {
+      const z = (ev.zona || 'SIN ZONA').toString().trim().toUpperCase() || 'SIN ZONA';
+      const cur = map.get(z) || { zona: z, total: 0, count: 0, supTotal: 0, supCount: 0, supVisits: 0 };
       cur.total += Number(ev.puntaje || 0);
       cur.count += 1;
       map.set(z, cur);
     });
-    (allFilteredSupervisions || []).forEach((s) => {
-      const z = (s.zona || 'SIN ZONA').toString().trim().toUpperCase();
-      if (!z || z === 'SIN ZONA') return; // Skip "SIN ZONA"
+    supList.forEach((s) => {
+      const z = (s.zona || 'SIN ZONA').toString().trim().toUpperCase() || 'SIN ZONA';
       const cur = map.get(z) || { zona: z, total: 0, count: 0, supTotal: 0, supCount: 0, supVisits: 0 };
       if (s.status === 'completed') {
-         cur.supTotal = (cur.supTotal || 0) + Number(s.score || 0);
-         cur.supCount = (cur.supCount || 0) + 1;
+        cur.supTotal = (cur.supTotal || 0) + Number(s.score || 0);
+        cur.supCount = (cur.supCount || 0) + 1;
       }
       cur.supVisits = (cur.supVisits || 0) + (s.visits?.length || 0);
       map.set(z, cur);
@@ -649,63 +671,76 @@ export default function SupervisorEvaluationsPage() {
         const finalAvg = e.count && e.supCount ? (avg + supAvg) / 2 : (avg || supAvg);
         return { zona: e.zona, avg, count: e.count, supAvg, supCount: e.supCount, supVisits: e.supVisits, finalAvg };
       })
-      .sort((a, b) => b.finalAvg - a.finalAvg);
+      .sort((a, b) => {
+        if (a.zona === 'SIN ZONA') return 1;
+        if (b.zona === 'SIN ZONA') return -1;
+        return b.finalAvg - a.finalAvg;
+      });
 
-    // Add TOTAL row at the end (using globalStats values for consistency)
-    if (globalStats.total > 0 || globalStats.supCount > 0) {
+    // Add TOTAL row at the end
+    const totalEvalCount = evalList.length;
+    const totalEvalScore = evalList.reduce((acc, ev) => acc + Number(ev.puntaje || 0), 0);
+    const completedSups = supList.filter((s) => s.status === 'completed');
+    const totalSupCount = completedSups.length;
+    const totalSupScore = completedSups.reduce((acc, s) => acc + Number(s.score || 0), 0);
+    const totalAvg = totalEvalCount > 0 ? totalEvalScore / totalEvalCount : 0;
+    const totalSupAvg = totalSupCount > 0 ? totalSupScore / totalSupCount : 0;
+    const totalFinalAvg = totalEvalCount && totalSupCount ? (totalAvg + totalSupAvg) / 2 : (totalAvg || totalSupAvg);
+
+    if (totalEvalCount > 0 || totalSupCount > 0) {
       results.push({
         zona: 'TOTAL',
-        avg: globalStats.avgScore,
-        count: globalStats.total,
-        supAvg: globalStats.supAvg,
-        supCount: globalStats.supCount,
-        supVisits: (allFilteredSupervisions || []).reduce((acc, s) => acc + (s.visits?.length || 0), 0),
-        finalAvg: globalStats.finalAvg,
-        isTotal: true
+        avg: totalAvg,
+        count: totalEvalCount,
+        supAvg: totalSupAvg,
+        supCount: totalSupCount,
+        supVisits: supList.reduce((acc, s) => acc + (s.visits?.length || 0), 0),
+        finalAvg: totalFinalAvg,
+        isTotal: true,
       });
     }
 
     return results;
-  }, [allFilteredEvaluations, allFilteredSupervisions, globalStats]);
+  }, [baseFilteredEvaluations, baseFilteredSupervisions]);
 
   const routesForSelectedZone = useMemo(() => {
-    if (!selectedZone) return [];
+    const targetZone = selectedZone || 'TOTAL';
     const map = new Map();
-    (allFilteredEvaluations || []).forEach((ev) => {
-      const z = (ev.zona || 'SIN ZONA').toString().trim().toUpperCase();
-      const isTarget = (selectedZone === 'TOTAL' && z === 'SIN ZONA') || (z === selectedZone);
+    (baseFilteredEvaluations || []).forEach((ev) => {
+      const z = (ev.zona || 'SIN ZONA').toString().trim().toUpperCase() || 'SIN ZONA';
+      const isTarget = targetZone === 'TOTAL' || z === targetZone;
       if (!isTarget) return;
-      
-      const r = (ev.ruta || 'SIN RUTA').toString().trim().toUpperCase();
-      const cur = map.get(r) || { ruta: r, total: 0, count: 0, supTotal: 0, supCount: 0 };
+
+      const r = (ev.ruta || 'SIN RUTA').toString().trim().toUpperCase() || 'SIN RUTA';
+      const cur = map.get(r) || { ruta: r, total: 0, count: 0, supTotal: 0, supCount: 0, supVisits: 0 };
       cur.total += Number(ev.puntaje || 0);
       cur.count += 1;
       map.set(r, cur);
     });
-    (allFilteredSupervisions || []).forEach((s) => {
-      const z = (s.zona || 'SIN ZONA').toString().trim().toUpperCase();
-      const isTarget = (selectedZone === 'TOTAL' && z === 'SIN ZONA') || (z === selectedZone);
+    (baseFilteredSupervisions || []).forEach((s) => {
+      const z = (s.zona || 'SIN ZONA').toString().trim().toUpperCase() || 'SIN ZONA';
+      const isTarget = targetZone === 'TOTAL' || z === targetZone;
       if (!isTarget) return;
-      
-      const r = (s.ruta || 'SIN RUTA').toString().trim().toUpperCase();
+
+      const r = (s.ruta || 'SIN RUTA').toString().trim().toUpperCase() || 'SIN RUTA';
       const cur = map.get(r) || { ruta: r, total: 0, count: 0, supTotal: 0, supCount: 0, supVisits: 0 };
       if (s.status === 'completed') {
-         cur.supTotal = (cur.supTotal || 0) + Number(s.score || 0);
-         cur.supCount = (cur.supCount || 0) + 1;
+        cur.supTotal = (cur.supTotal || 0) + Number(s.score || 0);
+        cur.supCount = (cur.supCount || 0) + 1;
       }
       cur.supVisits = (cur.supVisits || 0) + (s.visits?.length || 0);
       map.set(r, cur);
     });
-    
+
     return Array.from(map.values())
       .map((e) => {
-          const avg = e.count ? e.total / e.count : 0;
-          const supAvg = e.supCount ? e.supTotal / e.supCount : 0;
-          const finalAvg = e.count && e.supCount ? (avg + supAvg)/2 : (avg || supAvg);
-          return { ruta: e.ruta, avg, count: e.count, supAvg, supCount: e.supCount, supVisits: e.supVisits, finalAvg };
+        const avg = e.count ? e.total / e.count : 0;
+        const supAvg = e.supCount ? e.supTotal / e.supCount : 0;
+        const finalAvg = e.count && e.supCount ? (avg + supAvg) / 2 : (avg || supAvg);
+        return { ruta: e.ruta, avg, count: e.count, supAvg, supCount: e.supCount, supVisits: e.supVisits, finalAvg };
       })
       .sort((a, b) => b.finalAvg - a.finalAvg);
-  }, [selectedZone, allFilteredEvaluations, allFilteredSupervisions]);
+  }, [selectedZone, baseFilteredEvaluations, baseFilteredSupervisions]);
 
   const handleViewDetails = async (ev) => {
     console.log('View details requested for:', ev);
@@ -949,15 +984,15 @@ export default function SupervisorEvaluationsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <Input
-                  placeholder="Buscar por punto de venta, código, o evaluador..."
+                  placeholder="Buscar por punto de venta, código, ruta, zona o evaluador..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="bg-slate-700/50 border-slate-600 text-white"
                 />
                 <div className="space-y-2">
-                  <Select value={dateRange} onValueChange={setDateRange}>
+                  <Select value={dateRange} onValueChange={(val) => { setDateRange(val); setPage(1); }}>
                     <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
                       <SelectValue placeholder="Filtrar por fecha" />
                     </SelectTrigger>
@@ -982,7 +1017,7 @@ export default function SupervisorEvaluationsPage() {
                     />
                   )}
                 </div>
-                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <Select value={typeFilter} onValueChange={(val) => { setTypeFilter(val); setPage(1); }}>
                   <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
                     <SelectValue placeholder="Filtrar por tipo" />
                   </SelectTrigger>
@@ -992,13 +1027,85 @@ export default function SupervisorEvaluationsPage() {
                     <SelectItem value="canal_moderno">Canal Moderno</SelectItem>
                   </SelectContent>
                 </Select>
+                <Select
+                  value={selectedZone || 'ALL_ZONES'}
+                  onValueChange={(val) => {
+                    setSelectedZone(val === 'ALL_ZONES' ? null : val);
+                    setSelectedRoute(null);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                    <SelectValue placeholder="Todas las zonas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL_ZONES">Todas las zonas</SelectItem>
+                    {availableZones.map((z) => (
+                      <SelectItem key={z} value={z}>{z}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={selectedRoute || 'ALL_ROUTES'}
+                  onValueChange={(val) => {
+                    setSelectedRoute(val === 'ALL_ROUTES' ? null : val);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                    <SelectValue placeholder="Todas las rutas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL_ROUTES">Todas las rutas</SelectItem>
+                    {availableRoutes.map((r) => (
+                      <SelectItem key={r} value={r}>{r}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+              {(selectedZone || selectedRoute || searchTerm || typeFilter !== 'all') && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-700/70 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 text-slate-300">
+                    <span>Filtros activos:</span>
+                    {selectedZone && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                        Zona: {selectedZone}
+                      </span>
+                    )}
+                    {selectedRoute && (
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 font-bold">
+                        Ruta: {selectedRoute}
+                      </span>
+                    )}
+                    {typeFilter !== 'all' && (
+                      <span className="px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-bold">
+                        Tipo: {typeFilter.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-slate-300 hover:text-white"
+                    onClick={() => {
+                      setSelectedZone(null);
+                      setSelectedRoute(null);
+                      setSearchTerm('');
+                      setTypeFilter('all');
+                      setPage(1);
+                    }}
+                  >
+                    Limpiar filtros
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
 
         {/* Estadísticas por Zona y Ruta */}
-        {!loading && evaluations.length > 0 && (
+        {!loading && (baseFilteredEvaluations.length > 0 || baseFilteredSupervisions.length > 0) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <Card className="bg-slate-800/50 border-slate-700 backdrop-blur">
               <CardHeader>
@@ -1026,7 +1133,11 @@ export default function SupervisorEvaluationsPage() {
                         <tr
                           key={z.zona}
                           className={`border-b border-slate-700 cursor-pointer hover:bg-slate-700/50 transition-colors ${selectedZone === z.zona ? 'bg-emerald-900/40' : ''} ${z.isTotal ? 'bg-slate-700/80 font-bold border-t-2 border-emerald-500/30 sticky bottom-0' : ''}`}
-                          onClick={() => setSelectedZone((prev) => prev === z.zona ? null : z.zona)}
+                          onClick={() => {
+                            setSelectedZone((prev) => (prev === z.zona ? null : z.zona));
+                            setSelectedRoute(null);
+                            setPage(1);
+                          }}
                         >
                           <td className="p-2 text-white flex items-center gap-2">
                             {z.isTotal && <BarChart3 className="h-3 w-3 text-emerald-400" />}
@@ -1059,9 +1170,9 @@ export default function SupervisorEvaluationsPage() {
             <Card className="bg-slate-800/50 border-slate-700 backdrop-blur lg:col-span-1">
               <CardHeader>
                 <CardTitle className="text-white text-sm flex items-center justify-between">
-                  <span>Rutas {selectedZone ? `en ${selectedZone}` : ''}</span>
+                  <span>Rutas {selectedZone ? `en ${selectedZone}` : '(Todas las zonas)'}</span>
                   <span className="text-xs text-slate-400">
-                    {selectedZone && `Rutas: ${routesForSelectedZone.length}`}
+                    Rutas: {routesForSelectedZone.length}
                   </span>
                 </CardTitle>
               </CardHeader>
@@ -1077,9 +1188,16 @@ export default function SupervisorEvaluationsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedZone && routesForSelectedZone.length > 0 ? (
+                      {routesForSelectedZone.length > 0 ? (
                         routesForSelectedZone.map((r) => (
-                          <tr key={r.ruta} className="border-b border-slate-700 hover:bg-slate-700/30">
+                          <tr
+                            key={r.ruta}
+                            onClick={() => {
+                              setSelectedRoute((prev) => (prev === r.ruta ? null : r.ruta));
+                              setPage(1);
+                            }}
+                            className={`border-b border-slate-700 cursor-pointer hover:bg-slate-700/40 transition-colors ${selectedRoute === r.ruta ? 'bg-blue-900/40 font-bold' : ''}`}
+                          >
                             <td className="p-2 text-white">{r.ruta}</td>
                             <td className="p-2 text-right text-slate-300">
                               <span className={getScoreColor(r.supAvg)}>{r.supCount > 0 ? r.supAvg.toFixed(1) : '-'}</span> <span className="opacity-50 text-[10px]">({r.supVisits || 0})</span>
@@ -1095,9 +1213,7 @@ export default function SupervisorEvaluationsPage() {
                       ) : (
                         <tr>
                           <td colSpan={4} className="p-2 text-center text-slate-400">
-                            {selectedZone
-                              ? 'Sin rutas para la zona seleccionada.'
-                              : 'Selecciona una zona en la tabla de la izquierda.'}
+                            Sin rutas para la zona seleccionada.
                           </td>
                         </tr>
                       )}
@@ -1165,14 +1281,27 @@ export default function SupervisorEvaluationsPage() {
                         )}
                       </div>
 
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full border-slate-600 text-slate-300 hover:bg-slate-600"
-                        onClick={() => handleViewDetails(ev)}
-                      >
-                        Ver Detalles
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-600"
+                          onClick={() => handleViewDetails(ev)}
+                        >
+                          Ver Detalles
+                        </Button>
+                        {isAdminUser && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                            onClick={() => openEditModal(ev)}
+                          >
+                            <Pencil className="w-3.5 h-3.5 mr-1" />
+                            Editar
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1221,14 +1350,27 @@ export default function SupervisorEvaluationsPage() {
                           </td>
                           <td className="p-3 text-slate-300">{ev.usuario}</td>
                           <td className="p-3">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="border-slate-600 text-slate-300 hover:bg-slate-700"
-                              onClick={() => handleViewDetails(ev)}
-                            >
-                              Ver Detalles
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                                onClick={() => handleViewDetails(ev)}
+                              >
+                                Ver Detalles
+                              </Button>
+                              {isAdminUser && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                                  onClick={() => openEditModal(ev)}
+                                >
+                                  <Pencil className="w-3.5 h-3.5 mr-1" />
+                                  Editar
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1289,7 +1431,22 @@ export default function SupervisorEvaluationsPage() {
                 <EvaluationDetailViewer evaluation={selectedEvaluation} />
               )}
             </div>
-            <DialogFooter>
+            <DialogFooter className="flex gap-2">
+              {isAdminUser && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const target = selectedEvaluation;
+                    setSelectedEvaluation(null);
+                    openEditModal(target);
+                  }}
+                  className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                >
+                  <Pencil className="w-4 h-4 mr-1.5" />
+                  Editar Evaluación
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 onClick={() => setSelectedEvaluation(null)}
@@ -1298,6 +1455,133 @@ export default function SupervisorEvaluationsPage() {
                 Cerrar
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Modal Admin: Editar Evaluación */}
+      {editingEvaluation && (
+        <Dialog open={!!editingEvaluation} onOpenChange={(open) => !open && setEditingEvaluation(null)}>
+          <DialogContent className="max-w-lg bg-slate-900 text-white border-slate-700">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-amber-400" />
+                Editar Evaluación ({editingEvaluation.tipo})
+              </DialogTitle>
+              <DialogDescription className="text-slate-400 text-xs">
+                Modifica los datos de la evaluación y su calificación. Los cambios se sincronizan en el servidor.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveEvaluationEdit} className="space-y-3 mt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Punto de Venta / Tienda</label>
+                  <Input
+                    value={editForm.punto_venta}
+                    onChange={(e) => setEditForm({ ...editForm, punto_venta: e.target.value })}
+                    className="bg-slate-800 border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Código Cliente</label>
+                  <Input
+                    value={editForm.client_code}
+                    onChange={(e) => setEditForm({ ...editForm, client_code: e.target.value })}
+                    className="bg-slate-800 border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Ruta</label>
+                  <Input
+                    value={editForm.ruta}
+                    onChange={(e) => setEditForm({ ...editForm, ruta: e.target.value })}
+                    className="bg-slate-800 border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Zona</label>
+                  <Input
+                    value={editForm.zona}
+                    onChange={(e) => setEditForm({ ...editForm, zona: e.target.value })}
+                    className="bg-slate-800 border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Evaluador</label>
+                  <Input
+                    value={editForm.usuario}
+                    onChange={(e) => setEditForm({ ...editForm, usuario: e.target.value })}
+                    className="bg-slate-800 border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Fecha y Hora</label>
+                  <Input
+                    type="datetime-local"
+                    value={editForm.fecha}
+                    onChange={(e) => setEditForm({ ...editForm, fecha: e.target.value })}
+                    className="bg-slate-800 border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-emerald-400">Puntaje Total (%)</label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    value={editForm.puntaje}
+                    onChange={(e) => setEditForm({ ...editForm, puntaje: e.target.value })}
+                    className="bg-slate-800 border-emerald-500/40 text-emerald-300 font-bold text-sm"
+                  />
+                </div>
+                {editingEvaluation.tipo === 'PDV' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300">Surtido (%)</label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={editForm.surtido_porcentaje}
+                      onChange={(e) => setEditForm({ ...editForm, surtido_porcentaje: e.target.value })}
+                      className="bg-slate-800 border-slate-700 text-white text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Observaciones / Comentarios</label>
+                <textarea
+                  rows={3}
+                  value={editForm.observaciones}
+                  onChange={(e) => setEditForm({ ...editForm, observaciones: e.target.value })}
+                  className="w-full rounded-md bg-slate-800 border border-slate-700 p-2.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="Comentarios u observaciones de la evaluación..."
+                />
+              </div>
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingEvaluation(null)}
+                  className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                >
+                  {savingEdit ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
+                  Guardar Cambios
+                </Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       )}

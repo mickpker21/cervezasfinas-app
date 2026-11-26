@@ -557,7 +557,7 @@ export async function syncOnboardSupervisions(supervisor_id = 'all') {
 
     try {
         const { fetchOnboardSupervisionsApi } = await import('@/lib/mysqlOnboard');
-        const res = await fetchOnboardSupervisionsApi({ supervisor_id, limit: 300 });
+        const res = await fetchOnboardSupervisionsApi({ supervisor_id, limit: 2000 });
         const supervisions = res.rows || [];
         console.log(`[onboardSupervisionRepository] Sync for ${supervisor_id} returned ${supervisions.length} records`);
 
@@ -651,4 +651,136 @@ async function saveOnboardDataToLocal(supervisions) {
         console.error('[onboardSupervisionRepository] SQLite Save Error:', e);
         await db.execute('ROLLBACK');
     }
+}
+
+/**
+ * Permite al Admin editar una Supervisión a Bordo completa (encabezado, score, estado,
+ * checklist y visitas) y sincronizarla con MySQL + almacenamiento local.
+ */
+export async function updateOnboardSupervisionAdmin(session, updates = {}) {
+    const db = await getDb();
+    const id = session.id;
+    const updatedHeader = {
+        id,
+        supervisor_id: session.supervisor_id,
+        supervisor_name: updates.supervisor_name ?? session.supervisor_name ?? 'Supervisor',
+        route_name: updates.route_name ?? session.route_name ?? '',
+        vendedor_id: session.vendedor_id ?? null,
+        vendedor_name: updates.vendedor_name ?? session.vendedor_name ?? '',
+        start_at: updates.start_at || session.start_at || getNowMexico(),
+        end_at:
+            updates.status === 'completed'
+                ? (updates.end_at || session.end_at || getNowMexico())
+                : (updates.end_at ?? session.end_at ?? null),
+        checklist_data: updates.checklist_data ?? session.checklist_data ?? {},
+        status: updates.status ?? session.status ?? 'completed',
+        score: updates.score !== undefined ? Number(updates.score) || 0 : Number(session.score) || 0,
+    };
+
+    const updatedVisits = Array.isArray(updates.visits) ? updates.visits : (session.visits || []);
+    const checklistJson =
+        typeof updatedHeader.checklist_data === 'string'
+            ? updatedHeader.checklist_data
+            : JSON.stringify(updatedHeader.checklist_data || {});
+
+    if (isMockDb()) {
+        const allSessions = db._storage.get('supervisor_onboard_supervisions') || [];
+        const sIdx = allSessions.findIndex((s) => s.id === id);
+        const sessionRow = { ...updatedHeader, checklist_data: checklistJson, synced: 1 };
+        if (sIdx >= 0) {
+            allSessions[sIdx] = sessionRow;
+        } else {
+            allSessions.push(sessionRow);
+        }
+        db._storage.set('supervisor_onboard_supervisions', [...allSessions]);
+
+        if (updatedVisits.length > 0) {
+            const allVisits = db._storage.get('supervisor_onboard_visits') || [];
+            const vMap = new Map(allVisits.map((v) => [v.id, v]));
+            updatedVisits.forEach((v) => {
+                vMap.set(v.id, {
+                    ...v,
+                    supervision_id: id,
+                    survey_data:
+                        typeof v.survey_data === 'string'
+                            ? v.survey_data
+                            : JSON.stringify(v.survey_data || {}),
+                    synced: 1,
+                });
+            });
+            db._storage.set('supervisor_onboard_visits', Array.from(vMap.values()));
+        }
+    } else {
+        await db.run(
+            `INSERT OR REPLACE INTO supervisor_onboard_supervisions (
+                id, supervisor_id, supervisor_name, route_name, vendedor_id, vendedor_name, start_at, end_at, checklist_data, status, score, synced
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                updatedHeader.id,
+                updatedHeader.supervisor_id,
+                updatedHeader.supervisor_name,
+                updatedHeader.route_name,
+                updatedHeader.vendedor_id,
+                updatedHeader.vendedor_name,
+                updatedHeader.start_at,
+                updatedHeader.end_at,
+                checklistJson,
+                updatedHeader.status,
+                updatedHeader.score,
+                1,
+            ]
+        );
+
+        for (const v of updatedVisits) {
+            await db.run(
+                `INSERT OR REPLACE INTO supervisor_onboard_visits (
+                    id, supervision_id, client_id, client_name, client_code, survey_data, evaluation_pdv_id, created_at, synced
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    v.id,
+                    id,
+                    v.client_id,
+                    v.client_name,
+                    v.client_code,
+                    typeof v.survey_data === 'string'
+                        ? v.survey_data
+                        : JSON.stringify(v.survey_data || {}),
+                    v.evaluation_pdv_id || null,
+                    v.created_at || getNowMexico(),
+                    1,
+                ]
+            );
+        }
+    }
+
+    const visitsForApi = updatedVisits.map((v) => ({
+        id: v.id,
+        supervision_id: id,
+        client_id: v.client_id,
+        client_name: v.client_name,
+        client_code: v.client_code,
+        survey_data:
+            typeof v.survey_data === 'string'
+                ? v.survey_data
+                : JSON.stringify(v.survey_data || {}),
+        evaluation_pdv_id: v.evaluation_pdv_id || null,
+        created_at: v.created_at || getNowMexico(),
+    }));
+
+    const res = await importOnboardSupervisionApi({
+        supervisions: [{ ...updatedHeader, checklist_data: checklistJson }],
+        visits: visitsForApi,
+    });
+    if (res?.errors?.length) {
+        throw new Error(JSON.stringify(res.errors));
+    }
+
+    return {
+        ...updatedHeader,
+        checklist_data:
+            typeof updatedHeader.checklist_data === 'string'
+                ? JSON.parse(updatedHeader.checklist_data || '{}')
+                : updatedHeader.checklist_data,
+        visits: updatedVisits,
+    };
 }

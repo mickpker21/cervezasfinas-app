@@ -2144,21 +2144,68 @@ export default function TeleventaShopOrders() {
                                                 <td className="px-2 py-2">
                                                     <div className="flex items-center justify-center gap-1.5 bg-background w-fit mx-auto rounded-lg p-0.5 border border-border">
                                                         <button
+                                                            type="button"
                                                             className="w-6 h-6 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center font-bold transition-colors"
                                                             onClick={() => {
                                                                 const newItems = [...editItems];
-                                                                if (newItems[idx].quantity > 0) {
-                                                                    newItems[idx] = { ...newItems[idx], quantity: newItems[idx].quantity - 1 };
+                                                                const cur = Number(newItems[idx].quantity) || 0;
+                                                                if (cur > 0) {
+                                                                    const div = Math.max(0.0001, Number(newItems[idx].presentation_divisor) || 1);
+                                                                    const nextQ = cur - 1;
+                                                                    newItems[idx] = {
+                                                                        ...newItems[idx],
+                                                                        quantity: nextQ,
+                                                                        base_quantity: Number((nextQ / div).toFixed(4))
+                                                                    };
                                                                 }
                                                                 setEditItems(newItems);
                                                             }}
                                                         >-</button>
-                                                        <span className="w-6 text-center font-mono text-foreground font-bold">{item.quantity}</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={item.quantity ?? ''}
+                                                            onChange={(e) => {
+                                                                const raw = e.target.value;
+                                                                const newItems = [...editItems];
+                                                                if (raw === '') {
+                                                                    newItems[idx] = { ...newItems[idx], quantity: '' };
+                                                                } else {
+                                                                    const nextQ = Math.max(0, parseInt(raw, 10) || 0);
+                                                                    const div = Math.max(0.0001, Number(newItems[idx].presentation_divisor) || 1);
+                                                                    newItems[idx] = {
+                                                                        ...newItems[idx],
+                                                                        quantity: nextQ,
+                                                                        base_quantity: Number((nextQ / div).toFixed(4))
+                                                                    };
+                                                                }
+                                                                setEditItems(newItems);
+                                                            }}
+                                                            onBlur={() => {
+                                                                const newItems = [...editItems];
+                                                                const cleanQ = Math.max(0, parseInt(newItems[idx]?.quantity, 10) || 0);
+                                                                const div = Math.max(0.0001, Number(newItems[idx]?.presentation_divisor) || 1);
+                                                                newItems[idx] = {
+                                                                    ...newItems[idx],
+                                                                    quantity: cleanQ,
+                                                                    base_quantity: Number((cleanQ / div).toFixed(4))
+                                                                };
+                                                                setEditItems(newItems);
+                                                            }}
+                                                            className="w-12 h-6 text-center font-mono text-foreground font-bold bg-background border border-input rounded px-1 text-xs focus:ring-1 focus:ring-primary outline-none"
+                                                        />
                                                         <button
+                                                            type="button"
                                                             className="w-6 h-6 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center font-bold transition-colors"
                                                             onClick={() => {
                                                                 const newItems = [...editItems];
-                                                                newItems[idx] = { ...newItems[idx], quantity: (newItems[idx].quantity || 0) + 1 };
+                                                                const nextQ = (Number(newItems[idx].quantity) || 0) + 1;
+                                                                const div = Math.max(0.0001, Number(newItems[idx].presentation_divisor) || 1);
+                                                                newItems[idx] = {
+                                                                    ...newItems[idx],
+                                                                    quantity: nextQ,
+                                                                    base_quantity: Number((nextQ / div).toFixed(4))
+                                                                };
                                                                 setEditItems(newItems);
                                                             }}
                                                         >+</button>

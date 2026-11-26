@@ -507,7 +507,17 @@ const SalesSimulator = ({
     });
   };
 
-  const updateQuantity = (cartKeyOrSku, quantity) => {
+  const updateQuantity = (cartKeyOrSku, quantity, isBlur = false) => {
+    if (quantity === '' && !isBlur) {
+      setCart((current) =>
+        current.map((item) => {
+          if (getSimCartKey(item) !== cartKeyOrSku && item.cve_marca !== cartKeyOrSku) return item;
+          return { ...item, quantity: '' };
+        })
+      );
+      return;
+    }
+
     const numQuantity = Number(quantity);
     const targetItem = cart.find((item) => getSimCartKey(item) === cartKeyOrSku || item.cve_marca === cartKeyOrSku);
     const sku = targetItem ? targetItem.cve_marca : cartKeyOrSku;
@@ -527,6 +537,18 @@ const SalesSimulator = ({
             ...item,
             quantity: numQuantity,
             base_quantity: Number((numQuantity / div).toFixed(4)),
+          };
+        })
+      );
+    } else if (isBlur) {
+      setCart((current) =>
+        current.map((item) => {
+          if (getSimCartKey(item) !== cartKeyOrSku && item.cve_marca !== cartKeyOrSku) return item;
+          const div = Math.max(0.0001, Number(item.presentation_divisor) || 1);
+          return {
+            ...item,
+            quantity: 1,
+            base_quantity: Number((1 / div).toFixed(4)),
           };
         })
       );
@@ -1010,8 +1032,9 @@ const SalesSimulator = ({
                               type="number"
                               min="1"
                               max={limitToStock ? (inventory[item.cve_marca] || 999) : 999}
-                              value={item.quantity}
-                              onChange={(e) => updateQuantity(cartKey, e.target.value)}
+                              value={item.quantity ?? ''}
+                              onChange={(e) => updateQuantity(cartKey, e.target.value, false)}
+                              onBlur={(e) => updateQuantity(cartKey, e.target.value, true)}
                               className="h-7 w-14 text-center border-none bg-transparent p-0 text-sm font-bold text-foreground focus-visible:ring-0"
                             />
                           </div>

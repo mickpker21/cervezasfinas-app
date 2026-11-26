@@ -12,18 +12,22 @@ import {
   Search,
   ShoppingBag,
   Info,
-  Download
+  Download,
+  Pencil,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import EvaluationDetailViewer from '@/components/EvaluationDetailViewer';
 import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
-import { getAllSupervisions, syncOnboardSupervisions } from '@/repositories/onboardSupervisionRepository';
+import { useToast } from '@/components/ui/use-toast';
+import { getAllSupervisions, syncOnboardSupervisions, updateOnboardSupervisionAdmin } from '@/repositories/onboardSupervisionRepository';
 
 export default function SupervisorOnboardSummary() {
   const { user } = useSupabaseAuth();
+  const { toast } = useToast();
   const navigate = useNavigate();
   const [supervisions, setSupervisions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +38,74 @@ export default function SupervisorOnboardSummary() {
 
   const role = (user?.user_metadata?.type || user?.user_metadata?.role || user?.user_metadata?.user_type || '').toLowerCase();
   const isAnalista = ['analista', 'analyst', 'admin', 'gerente', 'coortrade', 'coordinador', 'jefe', 'director'].includes(role);
+  const isAdminUser = ['admin', 'analista', 'analyst', 'gerente', 'director'].includes(role);
+
+  const [editingSession, setEditingSession] = useState(null);
+  const [savingSessionEdit, setSavingSessionEdit] = useState(false);
+  const [editSupForm, setEditSupForm] = useState({
+    route_name: '',
+    vendedor_name: '',
+    supervisor_name: '',
+    status: 'completed',
+    score: 0,
+    checklist_data: {},
+    visits: [],
+  });
+
+  const openEditSupervisionModal = (session, e = null) => {
+    if (e) e.stopPropagation();
+    const cleanChecklist = typeof session.checklist_data === 'string'
+      ? JSON.parse(session.checklist_data || '{}')
+      : { ...(session.checklist_data || {}) };
+    const cleanVisits = (session.visits || []).map((v) => ({
+      ...v,
+      survey_data:
+        typeof v.survey_data === 'string'
+          ? JSON.parse(v.survey_data || '{}')
+          : { ...(v.survey_data || {}) },
+    }));
+    setEditingSession(session);
+    setEditSupForm({
+      route_name: session.route_name || '',
+      vendedor_name: session.vendedor_name || '',
+      supervisor_name: session.supervisor_name || 'Supervisor',
+      status: session.status || 'completed',
+      score: Number(session.score || 0),
+      checklist_data: cleanChecklist,
+      visits: cleanVisits,
+    });
+  };
+
+  const handleSaveSupervisionEdit = async (e) => {
+    if (e) e.preventDefault();
+    if (!editingSession) return;
+    setSavingSessionEdit(true);
+    try {
+      const updated = await updateOnboardSupervisionAdmin(editingSession, {
+        ...editSupForm,
+        score: Number(editSupForm.score) || 0,
+      });
+      toast({
+        title: 'Supervisión a Bordo actualizada',
+        description: `Se guardaron los cambios de la ruta ${editSupForm.route_name}.`,
+        className: 'bg-emerald-600 text-white border-none',
+      });
+      setEditingSession(null);
+      if (selectedSession && selectedSession.id === updated.id) {
+        setSelectedSession(updated);
+      }
+      await loadData(false);
+    } catch (err) {
+      console.error('Error guardando supervisión:', err);
+      toast({
+        title: 'Error al guardar',
+        description: err?.message || 'No se pudo actualizar la supervisión.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingSessionEdit(false);
+    }
+  };
 
   const loadData = async (shouldSync = false) => {
     if (!user) return;
@@ -167,6 +239,195 @@ export default function SupervisorOnboardSummary() {
     } catch (e) { return dateStr; }
   };
 
+  const renderEditSupervisionModal = () => {
+    if (!editingSession) return null;
+    const checklistKeys = Object.keys(editSupForm.checklist_data || {}).filter(
+      (k) => !k.startsWith('_')
+    );
+    const defaultChecklistKeys = checklistKeys.length > 0
+      ? checklistKeys
+      : ['vehicle_clean', 'uniform_ok', 'vehicle_status_ok'];
+
+    return (
+      <Dialog open={!!editingSession} onOpenChange={(open) => !open && setEditingSession(null)}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-2xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Pencil className="w-5 h-5 text-amber-400" />
+              Editar Supervisión a Bordo
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleSaveSupervisionEdit} className="space-y-4 mt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Ruta</label>
+                <Input
+                  value={editSupForm.route_name}
+                  onChange={(e) => setEditSupForm({ ...editSupForm, route_name: e.target.value })}
+                  className="bg-slate-800 border-slate-700 text-white text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Vendedor</label>
+                <Input
+                  value={editSupForm.vendedor_name}
+                  onChange={(e) => setEditSupForm({ ...editSupForm, vendedor_name: e.target.value })}
+                  className="bg-slate-800 border-slate-700 text-white text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Supervisor</label>
+                <Input
+                  value={editSupForm.supervisor_name}
+                  onChange={(e) => setEditSupForm({ ...editSupForm, supervisor_name: e.target.value })}
+                  className="bg-slate-800 border-slate-700 text-white text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Estado</label>
+                  <select
+                    value={editSupForm.status}
+                    onChange={(e) => setEditSupForm({ ...editSupForm, status: e.target.value })}
+                    className="h-10 w-full rounded-md bg-slate-800 border border-slate-700 px-2.5 text-sm text-white"
+                  >
+                    <option value="completed">CERRADA (completed)</option>
+                    <option value="draft">ABIERTA (draft)</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-emerald-400">Score Total (%)</label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    value={editSupForm.score}
+                    onChange={(e) => setEditSupForm({ ...editSupForm, score: e.target.value })}
+                    className="bg-slate-800 border-emerald-500/40 text-emerald-300 font-bold text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Checklist de Salida */}
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-wider text-slate-400">
+                Checklist de Salida (clic para alternar SI / NO)
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {defaultChecklistKeys.map((key) => {
+                  const val = Boolean(editSupForm.checklist_data?.[key]);
+                  return (
+                    <button
+                      type="button"
+                      key={key}
+                      onClick={() =>
+                        setEditSupForm((prev) => ({
+                          ...prev,
+                          checklist_data: {
+                            ...(prev.checklist_data || {}),
+                            [key]: !val,
+                          },
+                        }))
+                      }
+                      className={`p-2 rounded-lg border text-center transition ${
+                        val
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                      }`}
+                    >
+                      <p className="text-[10px] uppercase font-bold truncate">{key.replace(/_/g, ' ')}</p>
+                      <p className="text-xs font-black">{val ? 'SI' : 'NO'}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Visitas evaluadas */}
+            {editSupForm.visits?.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-wider text-slate-400">
+                  Visitas de la Supervisión ({editSupForm.visits.length})
+                </label>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {editSupForm.visits.map((v, idx) => {
+                    const s = v.survey_data || {};
+                    const toggleVisitField = (field) => {
+                      const nextVisits = [...editSupForm.visits];
+                      const curVal = nextVisits[idx]?.survey_data?.[field] === 'si' ? 'no' : 'si';
+                      nextVisits[idx] = {
+                        ...nextVisits[idx],
+                        survey_data: {
+                          ...(nextVisits[idx].survey_data || {}),
+                          [field]: curVal,
+                        },
+                      };
+                      setEditSupForm({ ...editSupForm, visits: nextVisits });
+                    };
+                    return (
+                      <div key={v.id || idx} className="p-3 rounded-xl bg-slate-800/70 border border-slate-700 space-y-2">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-bold text-white">{v.client_name}</span>
+                          <span className="font-mono text-slate-400">{v.client_code}</span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
+                          {[
+                            { key: 'greeting', label: 'Saludo' },
+                            { key: 'negotiation', label: 'Negociación' },
+                            { key: 'pop_updated', label: 'POP' },
+                            { key: 'purchased', label: 'Venta' },
+                          ].map((f) => {
+                            const ok = s[f.key] === 'si';
+                            return (
+                              <button
+                                type="button"
+                                key={f.key}
+                                onClick={() => toggleVisitField(f.key)}
+                                className={`px-2 py-1.5 rounded border font-bold ${
+                                  ok
+                                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                    : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                                }`}
+                              >
+                                {f.label}: {ok ? 'SI' : 'NO'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditingSession(null)}
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={savingSessionEdit}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+              >
+                {savingSessionEdit ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
+                Guardar Cambios
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
   if (selectedSession) {
     return (
       <div className="min-h-screen bg-[#0a0e14] text-slate-200 pb-20">
@@ -288,7 +549,16 @@ export default function SupervisorOnboardSummary() {
                  ))}
                </div>
 
-               <div className="flex gap-3">
+               <div className="flex flex-wrap gap-3">
+                 {isAdminUser && (
+                   <Button
+                     type="button"
+                     className="flex-1 bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold hover:bg-amber-500/30"
+                     onClick={() => openEditSupervisionModal(selectedSession)}
+                   >
+                     <Pencil className="w-4 h-4 mr-2" /> Editar Supervisión
+                   </Button>
+                 )}
                  <Button className="flex-1 bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 font-bold hover:bg-emerald-600/40" onClick={exportToCSV}>
                     <Download className="w-4 h-4 mr-2" /> Exportar a Excel
                  </Button>
@@ -319,6 +589,7 @@ export default function SupervisorOnboardSummary() {
           </DialogContent>
         </Dialog>
 
+        {renderEditSupervisionModal()}
       </div>
     );
   }
@@ -413,7 +684,20 @@ export default function SupervisorOnboardSummary() {
                       <MapPin size={13} className="text-blue-500/40" /> {session.visits?.length || 0} PDVs
                     </div>
                   </div>
-                  <ChevronRight className="text-slate-700 group-hover:text-emerald-500/50 transition-colors" size={16} />
+                  <div className="flex items-center gap-2">
+                    {isAdminUser && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => openEditSupervisionModal(session, e)}
+                        className="h-7 px-2.5 text-[10px] border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/25"
+                      >
+                        <Pencil className="w-3 h-3 mr-1" /> Editar
+                      </Button>
+                    )}
+                    <ChevronRight className="text-slate-700 group-hover:text-emerald-500/50 transition-colors" size={16} />
+                  </div>
                 </div>
               </motion.div>
             ))
@@ -425,6 +709,7 @@ export default function SupervisorOnboardSummary() {
           )}
         </div>
       </main>
+      {renderEditSupervisionModal()}
     </div>
   );
 }

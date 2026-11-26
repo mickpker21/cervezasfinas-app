@@ -949,7 +949,41 @@ export default function App() {
     };
 
     window.addEventListener('error', handleGlobalImgError, true);
-    return () => window.removeEventListener('error', handleGlobalImgError, true);
+
+    // En Electron Windows (.exe), window.alert() y window.confirm() pueden dejar
+    // el webContents sin foco de teclado al cerrarse. Restaurar foco automáticamente.
+    const origAlert = window.alert?.bind(window);
+    const origConfirm = window.confirm?.bind(window);
+    const restoreKeyboardFocus = () => {
+      setTimeout(() => {
+        try {
+          window.focus();
+          if (document.activeElement && typeof document.activeElement.focus === 'function') {
+            document.activeElement.focus();
+          }
+        } catch {}
+      }, 20);
+    };
+    if (origAlert) {
+      window.alert = (msg) => {
+        const res = origAlert(msg);
+        restoreKeyboardFocus();
+        return res;
+      };
+    }
+    if (origConfirm) {
+      window.confirm = (msg) => {
+        const res = origConfirm(msg);
+        restoreKeyboardFocus();
+        return res;
+      };
+    }
+
+    return () => {
+      window.removeEventListener('error', handleGlobalImgError, true);
+      if (origAlert) window.alert = origAlert;
+      if (origConfirm) window.confirm = origConfirm;
+    };
   }, []);
 
   useEffect(() => {

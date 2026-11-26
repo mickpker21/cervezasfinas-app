@@ -193,9 +193,13 @@ async function loadLocalEvaluationsPDV(dateParams = {}) {
 
     if (isMockDb()) {
       const stored = db._storage.get('evaluaciones_pdv') || [];
+      const fromDay = from ? String(from).slice(0, 10) : null;
+      const toDay = to ? String(to).slice(0, 10) : null;
       const filtered = stored.filter(r => {
-        if (from && r.fecha < from) return false;
-        if (to && r.fecha > to) return false;
+        const d = String(r.fecha || r.created_at || '').slice(0, 10);
+        if (!d) return true;
+        if (fromDay && d < fromDay) return false;
+        if (toDay && d > toDay) return false;
         return true;
       });
       return filtered;
@@ -240,46 +244,246 @@ async function loadLocalEvaluationsPDV(dateParams = {}) {
   }
 }
 
+async function insertLocalEvaluationsPDVBatch(rows, synced = true) {
+  if (!rows?.length) return;
+  try {
+    const db = await getDb();
+    if (isMockDb()) {
+      const current = db._storage.get('evaluaciones_pdv') || [];
+      const map = new Map(current.map((c) => [c.id, c]));
+      rows.forEach((r) => {
+        map.set(r.id, { ...r, synced: synced ? 1 : 0 });
+      });
+      db._storage.set('evaluaciones_pdv', Array.from(map.values()));
+      return;
+    }
+    await db.execute('BEGIN TRANSACTION');
+    try {
+      for (const row of rows) {
+        await db.run(
+          `INSERT OR REPLACE INTO evaluaciones_pdv (id, client_id, user_id, fecha, payload, created_at, synced)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            row.id,
+            row.client_id,
+            row.user_id,
+            row.fecha,
+            typeof row.payload === 'string' ? row.payload : JSON.stringify(row.payload || {}),
+            row.created_at,
+            synced ? 1 : 0,
+          ]
+        );
+      }
+      await db.execute('COMMIT');
+    } catch (txErr) {
+      await db.execute('ROLLBACK');
+      throw txErr;
+    }
+  } catch (e) {
+    console.error('[evaluationsRepository] Error batch saving PDV local:', e);
+  }
+}
+
+async function insertLocalEvaluationsCMBatch(rows, synced = true) {
+  if (!rows?.length) return;
+  try {
+    const db = await getDb();
+    if (isMockDb()) {
+      const current = db._storage.get('evaluaciones') || [];
+      const map = new Map(current.map((c) => [c.id, c]));
+      rows.forEach((r) => {
+        map.set(r.id, { ...r, synced: synced ? 1 : 0 });
+      });
+      db._storage.set('evaluaciones', Array.from(map.values()));
+      return;
+    }
+    await db.execute('BEGIN TRANSACTION');
+    try {
+      for (const row of rows) {
+        await db.run(
+          `INSERT OR REPLACE INTO evaluaciones (id, tienda_id, fecha, tipo, payload, created_at, synced)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            row.id,
+            row.tienda_id || row.client_id,
+            row.fecha,
+            row.tipo || 'Canal Moderno',
+            typeof row.payload === 'string' ? row.payload : JSON.stringify(row.payload || {}),
+            row.created_at,
+            synced ? 1 : 0,
+          ]
+        );
+      }
+      await db.execute('COMMIT');
+    } catch (txErr) {
+      await db.execute('ROLLBACK');
+      throw txErr;
+    }
+  } catch (e) {
+    console.error('[evaluationsRepository] Error batch saving CM local:', e);
+  }
+}
+
 export async function getAllEvaluations(dateParams = {}) {
+  const { localOnly = false, ...apiParams } = dateParams || {};
+  if (localOnly) {
+    return await getAllEvaluationsLocal(apiParams);
+  }
+
   const online = await isOnline().catch(() => false);
   if (online) {
     try {
       const { fetchEvaluationsPDVApi, fetchEvaluationsCMApi } = await import('@/lib/mysqlEvaluations');
 
-      // Sync PDV
-      const pdvRows = await fetchEvaluationsPDVApi({ limit: 500, ...dateParams });
+      // Descarga en paralelo PDV y Canal Moderno para reducir a la mitad el tiempo de red
+      const [pdvRows, cmRows] = await Promise.all([
+        fetchEvaluationsPDVApi({ limit: 5000, ...apiParams }).catch((e) => {
+          console.warn('[evaluationsRepository] PDV fetch warning:', e);
+          return [];
+        }),
+        fetchEvaluationsCMApi({ limit: 5000, ...apiParams }).catch((e) => {
+          console.warn('[evaluationsRepository] CM fetch warning:', e);
+          return [];
+        }),
+      ]);
+
       if (pdvRows?.length) {
-        for (const r of pdvRows) {
-          if (typeof r.payload === 'string') {
+        const normalizedPdv = pdvRows.map((r) => {
+          let payload = r.payload;
+          if (typeof payload === 'string') {
             try {
-              r.payload = JSON.parse(r.payload);
-              // DOUBLE PARSE CHECK: If it's still a string, parse again (common with PHP/MySQL)
-              if (typeof r.payload === 'string') {
-                r.payload = JSON.parse(r.payload);
-              }
-            } catch (e) {
-              console.warn('[Repository] Error parsing payload:', e);
-              r.payload = {};
+              payload = JSON.parse(payload);
+              if (typeof payload === 'string') payload = JSON.parse(payload);
+            } catch {
+              payload = {};
             }
           }
-          await insertLocalEvaluationPDV(r, true);
-        }
+          return { ...r, payload: payload || {} };
+        });
+        await insertLocalEvaluationsPDVBatch(normalizedPdv, true);
       }
 
-      // Sync CM
-      const cmRows = await fetchEvaluationsCMApi({ limit: 500, ...dateParams });
       if (cmRows?.length) {
-        for (const r of cmRows) {
-          if (typeof r.payload === 'string') r.payload = JSON.parse(r.payload);
-          await insertLocalEvaluationCM(r, true);
-        }
+        const normalizedCm = cmRows.map((r) => {
+          let payload = r.payload;
+          if (typeof payload === 'string') {
+            try {
+              payload = JSON.parse(payload);
+              if (typeof payload === 'string') payload = JSON.parse(payload);
+            } catch {
+              payload = {};
+            }
+          }
+          return { ...r, payload: payload || {} };
+        });
+        await insertLocalEvaluationsCMBatch(normalizedCm, true);
       }
-
     } catch (e) {
       console.warn('[evaluationsRepository] Error syncing online all evaluations:', e);
     }
   }
-  return await getAllEvaluationsLocal(dateParams);
+  return await getAllEvaluationsLocal(apiParams);
+}
+
+/**
+ * Permite al Admin editar una evaluación (PDV o Canal Moderno) y sincronizarla con MySQL.
+ */
+export async function updateEvaluationAdmin(evalItem, updates = {}) {
+  const realId = evalItem.original_id || evalItem.id;
+  const isCM =
+    (evalItem.tipo || '').toUpperCase() === 'CANAL MODERNO' ||
+    (evalItem.tipo || '').toUpperCase() === 'CC';
+
+  const basePayload =
+    typeof evalItem.payload === 'string'
+      ? JSON.parse(evalItem.payload || '{}')
+      : { ...(evalItem.payload || {}) };
+
+  const newScore =
+    updates.puntaje !== undefined ? Number(updates.puntaje) || 0 : Number(evalItem.puntaje) || 0;
+  const newFecha = updates.fecha || evalItem.fecha || new Date().toISOString();
+  const newPuntoVenta =
+    updates.punto_venta !== undefined ? updates.punto_venta : evalItem.punto_venta;
+  const newClientCode =
+    updates.client_code !== undefined ? updates.client_code : evalItem.client_code;
+  const newRuta = updates.ruta !== undefined ? updates.ruta : evalItem.ruta;
+  const newZona = updates.zona !== undefined ? updates.zona : evalItem.zona;
+  const newEvaluator =
+    updates.usuario !== undefined ? updates.usuario : evalItem.usuario;
+  const newNotes =
+    updates.observaciones !== undefined
+      ? updates.observaciones
+      : basePayload.observaciones ?? basePayload.comentarios ?? basePayload.notes ?? '';
+
+  const updatedPayload = {
+    ...basePayload,
+    punto_venta: newPuntoVenta,
+    nombre_tienda: newPuntoVenta,
+    client_code: newClientCode,
+    cve_cliente: newClientCode,
+    ruta: newRuta,
+    zona: newZona,
+    user: newEvaluator,
+    evaluador: newEvaluator,
+    nombre: newEvaluator,
+    puntaje_total: newScore,
+    score: newScore,
+    promedio: newScore,
+    observaciones: newNotes,
+    comentarios: newNotes,
+    resultados: {
+      ...(basePayload.resultados || {}),
+      scoreFinal: newScore,
+    },
+    storeInfo: {
+      ...(basePayload.storeInfo || {}),
+      nombre: newPuntoVenta,
+      client_code: newClientCode,
+      evaluador: newEvaluator,
+      fecha: newFecha,
+    },
+  };
+
+  if (updates.surtido_porcentaje !== undefined) {
+    updatedPayload.surtido_porcentaje = Number(updates.surtido_porcentaje) || 0;
+  }
+
+  if (isCM) {
+    const cmRow = {
+      id: realId,
+      tienda_id: evalItem.client_id || basePayload.tienda_id || newClientCode || 'CM',
+      fecha: newFecha,
+      tipo: 'Canal Moderno',
+      payload: updatedPayload,
+      created_at: evalItem.created_at || newFecha,
+    };
+    await insertLocalEvaluationCM(cmRow, true);
+    const res = await importEvaluationsCMApi([cmRow]);
+    if (res?.errors?.length) {
+      throw new Error(res.errors.join(', '));
+    }
+    return cmRow;
+  } else {
+    const pdvRow = {
+      id: realId,
+      client_id: evalItem.client_id || basePayload.client_id || newClientCode || 'PDV',
+      user_id: basePayload.user_id || evalItem.user_id || null,
+      fecha: newFecha,
+      puntaje_total: newScore,
+      surtido_porcentaje:
+        updates.surtido_porcentaje !== undefined
+          ? Number(updates.surtido_porcentaje) || 0
+          : Number(basePayload.surtido_porcentaje) || 0,
+      payload: updatedPayload,
+      created_at: evalItem.created_at || newFecha,
+    };
+    await insertLocalEvaluationPDV(pdvRow, true);
+    const res = await importEvaluationsPDVApi([pdvRow]);
+    if (res?.errors?.length) {
+      throw new Error(res.errors.join(', '));
+    }
+    return pdvRow;
+  }
 }
 
 async function getAllEvaluationsLocal(dateParams = {}) {
@@ -384,9 +588,13 @@ async function loadLocalEvaluationsCM(dateParams = {}) {
     if (isMockDb()) {
       const stored = db._storage.get('evaluaciones');
       const all = Array.isArray(stored) ? stored : [];
+      const fromDay = from ? String(from).slice(0, 10) : null;
+      const toDay = to ? String(to).slice(0, 10) : null;
       return all.filter(r => {
-        if (from && r.fecha < from) return false;
-        if (to && r.fecha > to) return false;
+        const d = String(r.fecha || r.payload?.storeInfo?.fecha || r.created_at || '').slice(0, 10);
+        if (!d) return true;
+        if (fromDay && d < fromDay) return false;
+        if (toDay && d > toDay) return false;
         return true;
       });
     }
@@ -555,15 +763,39 @@ export async function getEvaluationById(id, type) {
 async function getEvaluationByIdLocal(id, type) {
   try {
     const db = await getDb();
-    // For brevity, using simplified local fetch as before
-    if (type === 'PDV') {
+    const isPdv = (type || '').toUpperCase() === 'PDV';
+    const parsePayload = (p) => {
+      if (!p) return {};
+      if (typeof p === 'string') {
+        try {
+          const parsed = JSON.parse(p);
+          return typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
+        } catch {
+          return {};
+        }
+      }
+      return p;
+    };
+
+    if (isMockDb()) {
+      const table = isPdv ? 'evaluaciones_pdv' : 'evaluaciones';
+      const rows = db._storage.get(table) || [];
+      const found = rows.find((r) => String(r.id) === String(id)) ||
+        (db._storage.get(isPdv ? 'evaluaciones' : 'evaluaciones_pdv') || []).find((r) => String(r.id) === String(id));
+      if (found) {
+        return { ...found, payload: parsePayload(found.payload) };
+      }
+      return null;
+    }
+
+    if (isPdv) {
       const res = await db.query('SELECT * FROM evaluaciones_pdv WHERE id = ?', [id]);
-      if (res.values?.length) return { ...res.values[0], payload: JSON.parse(res.values[0].payload) };
+      if (res.values?.length) return { ...res.values[0], payload: parsePayload(res.values[0].payload) };
     } else {
       const res = await db.query('SELECT * FROM evaluaciones WHERE id = ?', [id]);
-      if (res.values?.length) return { ...res.values[0], payload: JSON.parse(res.values[0].payload) };
+      if (res.values?.length) return { ...res.values[0], payload: parsePayload(res.values[0].payload) };
     }
-  } catch (e) { }
+  } catch (e) {}
   return null;
 }
 
