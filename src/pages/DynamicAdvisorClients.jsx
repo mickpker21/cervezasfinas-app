@@ -456,11 +456,11 @@ export default function DynamicAdvisorClients() {
   const updateClientGeolocation = async (client) => {
     setUpdatingId(client.id);
     try {
-      const pos = await getOptionalPositionFast(3000);
+      const pos = await getOptionalPositionFast(6000);
       if (!pos) {
         toast({
           title: 'GPS no disponible',
-          description: 'No se detectó ubicación en 3s. Se omitió la actualización de coordenadas.',
+          description: 'No se detectó ubicación en 6s. Se omitió la actualización de coordenadas.',
         });
         return;
       }

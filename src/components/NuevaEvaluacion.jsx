@@ -485,7 +485,7 @@ export default function NuevaEvaluacion({
                      disabled={capturingGps}
                      onClick={async () => {
                        setCapturingGps(true);
-                       const pos = await getOptionalPositionFast(3000);
+                       const pos = await getOptionalPositionFast(6000);
                        setCapturingGps(false);
                        if (pos) {
                          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -501,7 +501,7 @@ export default function NuevaEvaluacion({
                            }
                          }
                        } else {
-                         toast({ title: 'GPS no detectado en 3s (se omitirá para no bloquear la evaluación)' });
+                         toast({ title: 'GPS no detectado en 6s (se omitirá para no bloquear la evaluación)' });
                        }
                      }}
                      className={`shrink-0 h-10 px-4 rounded-xl shadow-sm ${capturedLocation ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-800 hover:bg-slate-900'}`}
@@ -978,7 +978,7 @@ export default function NuevaEvaluacion({
     try {
       // GEOLOCALIZACIÓN RÁPIDA OPCIONAL (3s) SI EL CLIENTE NO TIENE COORDENADAS
       if (!clientOriginalCoords && !capturedLocation) {
-        const quickPos = await getOptionalPositionFast(3000);
+        const quickPos = await getOptionalPositionFast(6000);
         if (quickPos) {
           const loc = { lat: quickPos.coords.latitude, lng: quickPos.coords.longitude };
           setCapturedLocation(loc);

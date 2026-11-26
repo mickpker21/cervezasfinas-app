@@ -289,7 +289,7 @@ export default function SupervisorOnboardSupervision() {
     if (!hasValidCoords) {
       setIsCapturingLocation(true);
       try {
-        const pos = await getOptionalPositionFast(3000);
+        const pos = await getOptionalPositionFast(6000);
         if (pos) {
           const coords = {
             lat: pos.coords.latitude,
@@ -309,7 +309,7 @@ export default function SupervisorOnboardSupervision() {
           client = { ...client, lat: coords.lat, lng: coords.lng, coords: JSON.stringify(coords) };
         } else {
           toast({
-            title: 'GPS omitido (3s)',
+            title: 'GPS omitido (6s)',
             description: 'No se detectó señal GPS. Puedes evaluar al cliente sin bloquear la supervisión.',
           });
         }

@@ -1,7 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 // Ensure this matches the version in package.json
-export const APP_CURRENT_VERSION = '2.1.7';
+export const APP_CURRENT_VERSION = '2.1.8';
 
 // URL to the version manifest hosted on your server
 export const UPDATE_MANIFEST_URL = 'https://cervezasfinas.com/apps/version.json';

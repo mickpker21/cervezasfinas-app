@@ -36,7 +36,7 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
     let cancelled = false;
     (async () => {
       setGettingLocation(true);
-      const pos = await getOptionalPositionFast(3000);
+      const pos = await getOptionalPositionFast(6000);
       if (!cancelled && pos) {
         setLat(String(pos.coords.latitude));
         setLng(String(pos.coords.longitude));
@@ -60,13 +60,13 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
     setLocationError("");
     setGettingLocation(true);
     try {
-      const pos = await getOptionalPositionFast(3000);
+      const pos = await getOptionalPositionFast(6000);
       if (pos) {
         const { latitude, longitude } = pos.coords;
         setLat(String(latitude));
         setLng(String(longitude));
       } else {
-        setLocationError("No se detectó ubicación en 3s (opcional: puedes guardar sin coordenadas).");
+        setLocationError("No se detectó ubicación en 6s (opcional: puedes guardar sin coordenadas).");
       }
     } finally {
       setGettingLocation(false);
@@ -90,7 +90,7 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
     let finalLat = lat;
     let finalLng = lng;
     if (!finalLat || !finalLng) {
-      const quickPos = await getOptionalPositionFast(3000);
+      const quickPos = await getOptionalPositionFast(6000);
       if (quickPos) {
         finalLat = String(quickPos.coords.latitude);
         finalLng = String(quickPos.coords.longitude);

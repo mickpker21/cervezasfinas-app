@@ -9,12 +9,30 @@ import { Camera, RefreshCw, X, CheckCircle2, Loader2, AlertTriangle } from 'luci
  * bypassing the OS File Picker / Photo Gallery so users must take a real-time photo.
  */
 export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fotografía' }) {
+  const overlayRef = useRef(null);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const nativeInputRef = useRef(null);
   const [facingMode, setFacingMode] = useState('environment');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [capturing, setCapturing] = useState(false);
+
+  // Evitar que Radix Dialog (DismissableLayer en document) interprete los toques
+  // dentro del portal de cámara como "click afuera" y cierre el modal padre.
+  useEffect(() => {
+    if (!open) return;
+    const el = overlayRef.current;
+    if (!el) return;
+    const stopNativeBubble = (e) => {
+      e.stopPropagation();
+    };
+    const events = ['pointerdown', 'mousedown', 'touchstart', 'click', 'focusin'];
+    events.forEach((evt) => el.addEventListener(evt, stopNativeBubble, false));
+    return () => {
+      events.forEach((evt) => el.removeEventListener(evt, stopNativeBubble, false));
+    };
+  }, [open]);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -101,15 +119,46 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
     };
   }, [open, facingMode, startCamera, stopStream]);
 
-  const handleTakePhoto = async () => {
+  const dataUrlToBlob = (dataUrl) => {
+    const parts = dataUrl.split(',');
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    return new Blob([u8arr], { type: mime });
+  };
+
+  const handleNativeFileChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    stopStream();
+    onCapture(file);
+    onClose();
+  };
+
+  const handleTakePhoto = async (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const video = videoRef.current;
-    if (!video || !video.videoWidth || capturing) return;
+    if (!video || capturing) return;
     setCapturing(true);
 
     try {
+      // Si el stream acaba de arrancar, dar hasta 600ms para que reporte dimensiones reales
+      let attempts = 0;
+      while ((!video.videoWidth || !video.videoHeight) && attempts < 6) {
+        await new Promise((r) => setTimeout(r, 100));
+        attempts++;
+      }
+
       const maxDim = 1280;
-      let w = video.videoWidth;
-      let h = video.videoHeight;
+      let w = video.videoWidth || video.clientWidth || 1280;
+      let h = video.videoHeight || video.clientHeight || 960;
       if (w > maxDim || h > maxDim) {
         if (w > h) {
           h = Math.round((h * maxDim) / w);
@@ -126,22 +175,45 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, w, h);
 
-      const blob = await new Promise((resolve) =>
-        canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.85)
-      );
+      let blob = await new Promise((resolve) => {
+        try {
+          canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.85);
+        } catch {
+          resolve(null);
+        }
+      });
+
+      // Fallback si Android WebView devuelve null en canvas.toBlob()
+      if (!blob) {
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        if (dataUrl && dataUrl.startsWith('data:image')) {
+          blob = dataUrlToBlob(dataUrl);
+        }
+      }
 
       if (blob) {
         const fileName = `evidencia_${Date.now()}.jpg`;
-        const file = new File([blob], fileName, {
-          type: 'image/jpeg',
-          lastModified: Date.now(),
-        });
+        let file;
+        try {
+          file = new File([blob], fileName, {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          });
+        } catch {
+          // Algunos WebViews antiguos no soportan constructor File
+          blob.name = fileName;
+          blob.lastModified = Date.now();
+          file = blob;
+        }
         stopStream();
         onCapture(file);
         onClose();
+      } else {
+        setError('No se pudo capturar la imagen desde el video. Intenta con Cámara Nativa.');
       }
-    } catch (e) {
-      console.error('[DirectCamera] Capture error:', e);
+    } catch (err) {
+      console.error('[DirectCamera] Capture error:', err);
+      setError('Error al capturar la foto. Intenta nuevamente o usa Cámara Nativa.');
     } finally {
       setCapturing(false);
     }
@@ -151,9 +223,22 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-[20000] bg-black flex flex-col select-none"
+      ref={overlayRef}
+      style={{ pointerEvents: 'auto' }}
+      className="fixed inset-0 z-[20000] pointer-events-auto bg-black flex flex-col select-none"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
+      <input
+        ref={nativeInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleNativeFileChange}
+        className="hidden"
+      />
       {/* Top Bar */}
       <div className="flex items-center justify-between px-4 py-3 bg-slate-950/90 border-b border-white/10 text-white shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -200,13 +285,22 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
           <div className="p-6 max-w-xs text-center space-y-4">
             <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto" />
             <p className="text-sm text-white font-bold">{error}</p>
-            <button
-              type="button"
-              onClick={() => startCamera(facingMode)}
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
-            >
-              Reintentar Cámara
-            </button>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => startCamera(facingMode)}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+              >
+                Reintentar Cámara
+              </button>
+              <button
+                type="button"
+                onClick={() => nativeInputRef.current?.click()}
+                className="px-4 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold"
+              >
+                Usar Cámara Nativa
+              </button>
+            </div>
           </div>
         ) : (
           <video
@@ -220,21 +314,29 @@ export function DirectCameraModal({ open, onClose, onCapture, title = 'Tomar Fot
       </div>
 
       {/* Bottom Shutter Bar */}
-      <div className="py-5 px-6 bg-slate-950/95 border-t border-white/10 flex items-center justify-center shrink-0">
+      <div className="py-5 px-6 bg-slate-950/95 border-t border-white/10 flex items-center justify-center relative shrink-0">
         <button
           type="button"
           disabled={loading || !!error || capturing}
           onClick={handleTakePhoto}
-          className="group flex flex-col items-center gap-1.5 disabled:opacity-40"
+          className="group flex flex-col items-center gap-1.5 disabled:opacity-40 touch-manipulation pointer-events-auto"
         >
-          <div className="w-18 h-18 p-1.5 rounded-full border-4 border-emerald-400 flex items-center justify-center active:scale-90 transition-transform">
-            <div className="w-14 h-14 rounded-full bg-white group-hover:bg-emerald-400 transition-colors flex items-center justify-center">
-              <Camera className="w-6 h-6 text-slate-950" />
+          <div className="w-20 h-20 p-1.5 rounded-full border-4 border-emerald-400 flex items-center justify-center active:scale-90 transition-transform">
+            <div className="w-16 h-16 rounded-full bg-white group-hover:bg-emerald-400 transition-colors flex items-center justify-center">
+              <Camera className="w-7 h-7 text-slate-950" />
             </div>
           </div>
           <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
             {capturing ? 'Capturando...' : 'Tomar Foto'}
           </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => nativeInputRef.current?.click()}
+          className="absolute right-4 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-[11px] font-bold text-slate-200 touch-manipulation"
+        >
+          Cámara nativa
         </button>
       </div>
     </div>

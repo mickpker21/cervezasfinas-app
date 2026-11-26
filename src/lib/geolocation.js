@@ -159,11 +159,11 @@ export async function getCurrentPositionSafe(options = {}) {
 }
 
 /**
- * Intenta obtener la ubicación rápidamente (por defecto máx. 3s) sin reintentos largos.
+ * Intenta obtener la ubicación rápidamente (por defecto máx. 6s) sin reintentos largos.
  * Si hay timeout, falta de señal o error, devuelve null para omitir la geolocalización sin bloquear.
  */
-export async function getOptionalPositionFast(timeoutMs = 3000) {
-  const safeTimeout = Math.max(500, Number(timeoutMs) || 3000);
+export async function getOptionalPositionFast(timeoutMs = 6000) {
+  const safeTimeout = Math.max(500, Number(timeoutMs) || 6000);
   try {
     const attempt = (async () => {
       if (Capacitor.isNativePlatform()) {
