@@ -35,11 +35,12 @@ export function sanitizeEvalForMySQL(rawRow, isCM = false) {
   delete payload.photo_files;
 
   const rawIdCandidate = isCM
-    ? (row.tienda_id ?? row.client_id ?? payload.tienda_id ?? payload.client_id ?? payload.client_code ?? payload.storeInfo?.client_code)
-    : (row.client_id ?? payload.client_id ?? payload.client_code ?? payload.cve_cliente);
+    ? (row.tienda_id ?? row.client_id ?? payload.tienda_id ?? payload.client_id ?? 0)
+    : (row.client_id ?? payload.client_id ?? 0);
 
-  const numericId = parseInt(String(rawIdCandidate ?? '').replace(/[^0-9]/g, ''), 10);
-  const safeIntId = Number.isFinite(numericId) && numericId > 0 ? numericId : 0;
+  const safeClientId = (rawIdCandidate !== null && rawIdCandidate !== undefined && rawIdCandidate !== '')
+    ? rawIdCandidate
+    : 0;
 
   // Normalizar fecha a YYYY-MM-DD (columna DATE en MySQL)
   const rawFecha = String(row.fecha || payload.fecha || payload.storeInfo?.fecha || getTodayMexico()).trim();
@@ -55,7 +56,7 @@ export function sanitizeEvalForMySQL(rawRow, isCM = false) {
   if (isCM) {
     return {
       ...row,
-      tienda_id: safeIntId,
+      tienda_id: safeClientId,
       fecha: safeFecha,
       tipo: row.tipo || payload.tipo || 'Canal Moderno',
       payload,
@@ -65,7 +66,7 @@ export function sanitizeEvalForMySQL(rawRow, isCM = false) {
 
   return {
     ...row,
-    client_id: safeIntId,
+    client_id: safeClientId,
     user_id: row.user_id || payload.user_id || null,
     fecha: safeFecha,
     puntaje_total: Number(row.puntaje_total ?? payload.puntaje_total ?? payload.score ?? 0) || 0,

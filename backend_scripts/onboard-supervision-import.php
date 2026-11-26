@@ -2,9 +2,14 @@
 date_default_timezone_set('America/Mexico_City');
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
-header("Access-Control-Allow-Methods: POST");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Max-Age: 3600");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
 
 include_once 'db_config.php';
 
@@ -13,7 +18,6 @@ function normalizeMexicoDateTime($val, $defaultNow = false) {
         return $defaultNow ? date('Y-m-d H:i:s') : null;
     }
     $str = trim((string)$val);
-    // Si ya viene en formato MySQL local de México (sin Z ni offset), conservarlo exacto
     if (preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/', $str)) {
         return strlen($str) === 16 ? str_replace('T', ' ', $str) . ':00' : str_replace('T', ' ', $str);
     }
@@ -36,6 +40,28 @@ if (!isset($data->supervisions) && !isset($data->visits)) {
 
 try {
     $pdo = getDBConnection();
+
+    // Verificar si la tabla tiene la columna supervisor_name; si no existe, intentar agregarla
+    // sin romper la consulta si no se puede alterar.
+    $hasSupervisorName = false;
+    try {
+        $colCheck = $pdo->query("SHOW COLUMNS FROM supervisor_onboard_supervisions LIKE 'supervisor_name'");
+        if ($colCheck && $colCheck->rowCount() > 0) {
+            $hasSupervisorName = true;
+        } else {
+            $pdo->exec("ALTER TABLE supervisor_onboard_supervisions ADD COLUMN supervisor_name VARCHAR(255) NULL AFTER supervisor_id");
+            $hasSupervisorName = true;
+        }
+    } catch (Exception $colEx) {
+        // Si no tiene permiso ALTER, continuamos sin supervisor_name
+        try {
+            $colCheck2 = $pdo->query("SHOW COLUMNS FROM supervisor_onboard_supervisions LIKE 'supervisor_name'");
+            $hasSupervisorName = ($colCheck2 && $colCheck2->rowCount() > 0);
+        } catch (Exception $e2) {
+            $hasSupervisorName = false;
+        }
+    }
+
     $pdo->beginTransaction();
 
     $processed_supervisions = 0;
@@ -44,35 +70,72 @@ try {
 
     // 1. Process Supervisions (Headers)
     if (isset($data->supervisions) && is_array($data->supervisions)) {
-        $sql = "INSERT INTO supervisor_onboard_supervisions 
-                (id, supervisor_id, supervisor_name, route_name, vendedor_id, vendedor_name, start_at, end_at, checklist_data, status, score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE 
-                supervisor_name = VALUES(supervisor_name),
-                route_name = VALUES(route_name),
-                vendedor_name = VALUES(vendedor_name),
-                start_at = VALUES(start_at),
-                end_at = VALUES(end_at),
-                checklist_data = VALUES(checklist_data),
-                status = VALUES(status),
-                score = VALUES(score)";
-        
+        if ($hasSupervisorName) {
+            $sql = "INSERT INTO supervisor_onboard_supervisions 
+                    (id, supervisor_id, supervisor_name, route_name, vendedor_id, vendedor_name, start_at, end_at, checklist_data, status, score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    supervisor_name = VALUES(supervisor_name),
+                    route_name = VALUES(route_name),
+                    vendedor_name = VALUES(vendedor_name),
+                    start_at = VALUES(start_at),
+                    end_at = VALUES(end_at),
+                    checklist_data = VALUES(checklist_data),
+                    status = VALUES(status),
+                    score = VALUES(score)";
+        } else {
+            $sql = "INSERT INTO supervisor_onboard_supervisions 
+                    (id, supervisor_id, route_name, vendedor_id, vendedor_name, start_at, end_at, checklist_data, status, score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    route_name = VALUES(route_name),
+                    vendedor_name = VALUES(vendedor_name),
+                    start_at = VALUES(start_at),
+                    end_at = VALUES(end_at),
+                    checklist_data = VALUES(checklist_data),
+                    status = VALUES(status),
+                    score = VALUES(score)";
+        }
+
         $stmt = $pdo->prepare($sql);
         foreach ($data->supervisions as $s) {
             try {
-                $stmt->execute([
-                    $s->id,
-                    $s->supervisor_id,
-                    isset($s->supervisor_name) ? $s->supervisor_name : 'Supervisor',
-                    $s->route_name,
-                    isset($s->vendedor_id) ? $s->vendedor_id : null,
-                    $s->vendedor_name,
-                    normalizeMexicoDateTime(isset($s->start_at) ? $s->start_at : null, true),
-                    normalizeMexicoDateTime(isset($s->end_at) ? $s->end_at : null, false),
-                    isset($s->checklist_data) ? (is_string($s->checklist_data) ? $s->checklist_data : json_encode($s->checklist_data)) : null,
-                    isset($s->status) ? $s->status : 'draft',
-                    isset($s->score) ? $s->score : 0
-                ]);
+                $checklistStr = isset($s->checklist_data)
+                    ? (is_string($s->checklist_data) ? $s->checklist_data : json_encode($s->checklist_data))
+                    : null;
+                $startAt = normalizeMexicoDateTime(isset($s->start_at) ? $s->start_at : null, true);
+                $endAt = normalizeMexicoDateTime(isset($s->end_at) ? $s->end_at : null, false);
+                $statusVal = isset($s->status) ? $s->status : 'draft';
+                $scoreVal = isset($s->score) ? $s->score : 0;
+
+                if ($hasSupervisorName) {
+                    $stmt->execute([
+                        $s->id,
+                        $s->supervisor_id,
+                        isset($s->supervisor_name) ? $s->supervisor_name : 'Supervisor',
+                        $s->route_name,
+                        isset($s->vendedor_id) ? $s->vendedor_id : null,
+                        $s->vendedor_name,
+                        $startAt,
+                        $endAt,
+                        $checklistStr,
+                        $statusVal,
+                        $scoreVal
+                    ]);
+                } else {
+                    $stmt->execute([
+                        $s->id,
+                        $s->supervisor_id,
+                        $s->route_name,
+                        isset($s->vendedor_id) ? $s->vendedor_id : null,
+                        $s->vendedor_name,
+                        $startAt,
+                        $endAt,
+                        $checklistStr,
+                        $statusVal,
+                        $scoreVal
+                    ]);
+                }
                 $processed_supervisions++;
             } catch (Exception $e) {
                 $errors[] = ["type" => "supervision", "id" => $s->id, "error" => $e->getMessage()];
@@ -117,7 +180,7 @@ try {
     ]);
 
 } catch (Exception $e) {
-    if ($pdo) $pdo->rollBack();
+    if ($pdo && $pdo->inTransaction()) $pdo->rollBack();
     http_response_code(500);
     echo json_encode(["message" => "Critical error", "error" => $e->getMessage()]);
 }

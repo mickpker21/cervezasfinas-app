@@ -1,6 +1,5 @@
 <?php
 // backend_scripts/php/evaluations-import.php (Canal Moderno)
-date_default_timezone_set('America/Mexico_City');
 include_once 'db.php';
 
 header('Content-Type: application/json');
@@ -21,36 +20,6 @@ if (empty($rows)) {
     exit;
 }
 
-function normEvalDateCm($val) {
-    if (empty($val)) return date('Y-m-d');
-    $s = trim((string)$val);
-    if (preg_match('/^\d{4}-\d{2}-\d{2}/', $s)) {
-        return substr($s, 0, 10);
-    }
-    try {
-        $dt = new DateTime($s);
-        $dt->setTimezone(new DateTimeZone('America/Mexico_City'));
-        return $dt->format('Y-m-d');
-    } catch (Exception $e) {
-        return date('Y-m-d');
-    }
-}
-
-function normEvalDateTimeCm($val) {
-    if (empty($val)) return date('Y-m-d H:i:s');
-    $s = trim((string)$val);
-    if (preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/', $s)) {
-        return strlen($s) === 16 ? str_replace('T', ' ', $s) . ':00' : str_replace('T', ' ', $s);
-    }
-    try {
-        $dt = new DateTime($s);
-        $dt->setTimezone(new DateTimeZone('America/Mexico_City'));
-        return $dt->format('Y-m-d H:i:s');
-    } catch (Exception $e) {
-        return date('Y-m-d H:i:s');
-    }
-}
-
 $stmt = $pdo->prepare("
     INSERT INTO evaluaciones (
         id, tienda_id, fecha, tipo, payload, created_at
@@ -67,17 +36,13 @@ $errors = [];
 
 foreach ($rows as $row) {
     try {
-        $rawTiendaId = $row['tienda_id'] ?? $row['client_id'] ?? ($row['payload']['client_code'] ?? ($row['payload']['storeInfo']['client_code'] ?? 0));
-        $digits = preg_replace('/[^0-9]/', '', (string)$rawTiendaId);
-        $safeTiendaId = ($digits !== '' && is_numeric($digits)) ? (int)$digits : 0;
-
         $stmt->execute([
             ':id' => $row['id'],
-            ':tienda_id' => $safeTiendaId,
-            ':fecha' => normEvalDateCm($row['fecha'] ?? ($row['payload']['storeInfo']['fecha'] ?? null)),
+            ':tienda_id' => $row['tienda_id'] ?? $row['client_id'] ?? 0,
+            ':fecha' => !empty($row['fecha']) ? substr((string)$row['fecha'], 0, 10) : date('Y-m-d'),
             ':tipo' => $row['tipo'] ?? 'Canal Moderno',
             ':payload' => is_string($row['payload'] ?? null) ? $row['payload'] : json_encode($row['payload'] ?? $row),
-            ':created_at' => normEvalDateTimeCm($row['created_at'] ?? null)
+            ':created_at' => $row['created_at'] ?? date('Y-m-d H:i:s')
         ]);
         $processed++;
     } catch (PDOException $e) {
