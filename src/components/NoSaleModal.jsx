@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -8,7 +8,7 @@ import { createVisit } from '@/repositories/visitsRepository';
 import { useSupabaseAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import { Loader2, Camera, MapPin, XCircle } from 'lucide-react';
-import { getCurrentPositionSafe } from '@/lib/geolocation';
+import { getOptionalPositionFast, warmUpGeolocation } from '@/lib/geolocation';
 import { DirectCameraField } from '@/components/common/DirectCameraModal';
 import { getTodayMexico, getMexicoTimeString, getNowMexico } from '@/lib/dateUtils';
 
@@ -31,6 +31,18 @@ const NoSaleModal = ({ isOpen, onClose, client, onSuccess }) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [location, setLocation] = useState(null);
 
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+        warmUpGeolocation();
+        getOptionalPositionFast(6000).then((pos) => {
+            if (!cancelled && pos?.coords) {
+                setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            }
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [isOpen]);
+
     const handleSubmit = async () => {
         if (!reason) {
             toast({ title: "Falta motivo", description: "Selecciona una razón para la no-venta.", variant: "destructive" });
@@ -43,14 +55,13 @@ const NoSaleModal = ({ isOpen, onClose, client, onSuccess }) => {
 
         setIsSubmitting(true);
         try {
-            // Optional: Capture location automatically if possible or require it
-            // For speed in Autoventa, we might skip strict geo-fencing for No-Sale unless required.
-            // But good to have coordinates.
             let coords = location;
             if (!coords) {
                 try {
-                    const pos = await getCurrentPositionSafe();
-                    coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    const pos = await getOptionalPositionFast(6000);
+                    if (pos?.coords) {
+                        coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    }
                 } catch (e) {
                     console.warn("Could not get location for no-sale", e);
                 }

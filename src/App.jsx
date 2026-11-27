@@ -996,6 +996,11 @@ export default function App() {
         console.warn('[App] Error hiding splash:', e);
       }
 
+      // Mantener receptor GPS satelital encendido en segundo plano (clave para equipos sin SIM ni internet)
+      import('@/lib/geolocation').then(({ startGpsBackgroundWatch }) => {
+        startGpsBackgroundWatch?.();
+      }).catch(() => {});
+
       try {
         // Inicializar notificaciones push
         console.log('[App] Inicializando notificaciones...');
