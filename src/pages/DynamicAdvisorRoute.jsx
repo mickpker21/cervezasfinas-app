@@ -269,34 +269,38 @@ export default function DynamicAdvisorRoute() {
         const id = u?.id;
         if (id) setAdvisorId(id);
 
-        // 1. Respaldo por usuario o global
+        // 1. Lectura instantánea (0ms) de metadata, profile o caché local
+        const meta = u?.user_metadata || {};
+        const prof = u?.profile || {};
+        let immediateRoute = String(
+          prof.route || prof.sales_route || prof.ruta ||
+          meta.route || meta.sales_route || meta.ruta || ''
+        ).trim();
+
         let cachedRoute = null;
         if (id) {
-          cachedRoute = await kvStorage.getItem(`advisor_user_route_${id}`);
+          cachedRoute = await kvStorage.getItem(`advisor_user_route_${id}`).catch(() => null);
         }
         if (!cachedRoute) {
-          cachedRoute = await kvStorage.getItem('last_known_route');
+          cachedRoute = await kvStorage.getItem('last_known_route').catch(() => null);
         }
-        if (cachedRoute) setUserRoute(normalize(cachedRoute));
+        const fastRoute = cachedRoute || immediateRoute;
+        if (fastRoute) {
+          setUserRoute(normalize(fastRoute));
+        }
 
-        let finalRoute = "";
-
-        // 2. Perfil (Source of Truth - Online)
-        if (id) {
+        // 2. Verificar también rutas asignadas en /admin/users (supervisor_allowed_sales_routes / supervisor_allowed_routes)
+        let finalRoute = fastRoute || "";
+        if (!finalRoute && id) {
           try {
-            const { data: profile } = await supabase.from("profiles").select("*").eq("id", id).single();
-            if (profile) {
-              finalRoute = profile.route || profile.sales_route || profile.ruta || "";
-            }
-          } catch (err) { }
+            const { getAllowedRoutes } = await import('@/repositories/metadataRepository');
+            const allowed = await getAllowedRoutes(id);
+            if (allowed?.sales?.length > 0) finalRoute = allowed.sales[0];
+            else if (allowed?.internal?.length > 0) finalRoute = allowed.internal[0];
+          } catch (e) { }
         }
 
-        // 3. Metadata fallback
-        if (!finalRoute && u) {
-          finalRoute = u?.user_metadata?.route || u?.user_metadata?.sales_route || u?.user_metadata?.ruta || "";
-        }
-
-        // 4. Repo detector fallback
+        // 3. Fallback detector si sigue vacío
         if (!finalRoute) {
           try {
             const { detectUserRoute } = await import('@/repositories/routeRepository');

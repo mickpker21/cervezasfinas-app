@@ -14,7 +14,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { loadEvaluationConfig, defaultEvaluationConfig, onEvaluationConfigUpdated, subscribeEvaluationConfig } from "@/lib/evaluationConfig";
 import { getClientsPaged } from "@/repositories/clientsRepository";
 import { DirectCameraField } from "@/components/common/DirectCameraModal";
-import { Building2, Search, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Building2, Search, CheckCircle2, AlertTriangle, Sparkles, Loader2, ShieldCheck } from "lucide-react";
+import { analyzeModernChannelWithAI } from "@/services/aiCoolerEvaluationService";
 
 /* ===== UI helpers ===== */
 function YesNo({ value, onChange, size = "default" }) {
@@ -79,6 +80,15 @@ export default function CanalModernoPage({ embeddedClient = null, hideRedirect =
     }
     return false;
   }, [evalMode, location.search, location.state, embeddedClient]);
+
+  const isAiMode = useMemo(() => {
+    const urlAi = new URLSearchParams(location.search || "").get("ai");
+    return urlAi === "1" || urlAi === "true" || location.state?.ai === true;
+  }, [location.search, location.state]);
+
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const [aiError, setAiError] = useState("");
 
   const activeCfg = isOxxoMode ? oxxoCfg : modernCfg;
 
@@ -299,6 +309,82 @@ export default function CanalModernoPage({ embeddedClient = null, hideRedirect =
 
   const totalFinal = clamp(sobre100 + extras, 0, Number(activeCfg?.maxScoreWithExtras ?? 110));
 
+  const handleRunModernAiAnalysis = async () => {
+    if (!photoFachada || !photoDestino || !photoImpulso) {
+      toast({
+        title: "Faltan fotografías",
+        description: "Toma primero las 3 fotos (Fachada, Destino e Impulso) para evaluar con IA.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      toast({
+        title: "Modo Offline Detectado",
+        description: "No hay conexión a internet. Las 3 fotos se evaluarán con IA automáticamente al sincronizar con Wi-Fi.",
+      });
+      return;
+    }
+
+    setAiAnalyzing(true);
+    setAiError("");
+    try {
+      const targetBeerPct = Number(activeCfg?.beerShareTargetPct ?? (isOxxoMode ? 45 : 41));
+      const aiData = await analyzeModernChannelWithAI({
+        photoFachada,
+        photoDestino,
+        photoImpulso,
+        isOxxo: isOxxoMode,
+        targetBeerPct,
+      });
+
+      setAiResult(aiData);
+
+      if (aiData.surtido) {
+        setSurtido((prev) => ({
+          ...prev,
+          cervezaCompleta: Boolean(aiData.surtido.cervezaCompleta),
+          otrasCatCompleta: Boolean(aiData.surtido.otrasCatCompleta),
+          frescuraOk: aiData.surtido.frescuraOk !== false,
+        }));
+      }
+      if (aiData.precios) {
+        setPrecios({ preciosVisibles: Boolean(aiData.precios.preciosVisibles) });
+      }
+      if (aiData.promos) {
+        setPromos({
+          tableroVigente: Boolean(aiData.promos.tableroVigente),
+          papeletaCadena: Boolean(aiData.promos.papeletaCadena),
+        });
+      }
+      if (aiData.impulso) {
+        setImpulso((prev) => ({
+          primera: { ...prev.primera, ...(aiData.impulso.primera || {}) },
+          flanqueo: { ...prev.flanqueo, ...(aiData.impulso.flanqueo || {}) },
+          zero: { ...prev.zero, ...(aiData.impulso.zero || {}) },
+          enfriador: { ...prev.enfriador, ...(aiData.impulso.enfriador || {}) },
+        }));
+      }
+      if (aiData.destino) {
+        setDestino((prev) => ({
+          cerveza: { ...prev.cerveza, ...(aiData.destino.cerveza || {}) },
+          bas: { ...prev.bas, ...(aiData.destino.bas || {}) },
+        }));
+      }
+
+      toast({
+        title: "🤖 Evaluación IA completada",
+        description: aiData.resumen_ejecutivo || "Se calificaron las secciones automáticamente.",
+      });
+    } catch (err) {
+      console.error("[CanalModerno IA] Error:", err);
+      setAiError(err?.message || "No se pudo conectar con la IA. Se evaluará automáticamente al sincronizar.");
+    } finally {
+      setAiAnalyzing(false);
+    }
+  };
+
   /* ===== Guardar ===== */
   async function guardar() {
     if (!supabase) { alert("Configuración de Supabase incompleta."); return; }
@@ -329,6 +415,11 @@ export default function CanalModernoPage({ embeddedClient = null, hideRedirect =
           impulso: photoImpulso
         },
         timestamp: new Date().toISOString(),
+        ...(isAiMode ? {
+          ai_mode: true,
+          ai_status: aiResult ? "analyzed" : "pending_offline",
+          ai_evaluation: aiResult || null,
+        } : {}),
       };
 
       const insertRow = {
@@ -756,10 +847,17 @@ export default function CanalModernoPage({ embeddedClient = null, hideRedirect =
           </div>
           <div>
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              {isOxxoMode ? 'Nueva Evaluación – OXXO' : 'Evaluación – Canal Moderno'}
+              {isOxxoMode
+                ? (isAiMode ? '🤖 Nueva Evaluación – OXXO con IA' : 'Nueva Evaluación – OXXO')
+                : (isAiMode ? '🤖 Evaluación – Canal Moderno con IA' : 'Evaluación – Canal Moderno')}
               <Badge className={`${isOxxoMode ? 'bg-amber-600' : 'bg-purple-600'} text-white border-none text-[10px]`}>
                 {isOxxoMode ? 'Cadena OXXO' : 'Corporativo'}
               </Badge>
+              {isAiMode && (
+                <Badge className="bg-emerald-600 text-white border-none text-[10px]">
+                  VISIÓN IA
+                </Badge>
+              )}
             </h2>
             <p className="text-xs text-slate-400">
               {storeInfo.nombre ? `${storeInfo.nombre} (${storeInfo.client_code || 'S/C'})` : 'Selecciona o ingresa los datos de la tienda'}
@@ -780,6 +878,89 @@ export default function CanalModernoPage({ embeddedClient = null, hideRedirect =
       <div className="w-full h-2 rounded bg-white/10 overflow-hidden mb-4">
         <div className="h-full bg-primary transition-all" style={{ width: `${progressPct}%` }} />
       </div>
+
+      {/* Panel de Fotos + Evaluación IA cuando se entra en Modo IA */}
+      {isAiMode && (
+        <Card className="mb-4 border-emerald-500/40 bg-slate-900/90 text-white">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2 text-emerald-400">
+              <Sparkles className="w-5 h-5" />
+              🤖 Captura las 3 Fotos y Califica Automáticamente con IA
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DirectCameraField
+                label="Foto 1 — Fachada / Frontal"
+                required
+                file={photoFachada}
+                onCapture={(file) => setPhotoFachada(file)}
+              />
+              <DirectCameraField
+                label="Foto 2 — Destino / Anaquel / Cuarto Frío"
+                required
+                file={photoDestino}
+                onCapture={(file) => setPhotoDestino(file)}
+              />
+              <DirectCameraField
+                label="Foto 3 — Impulso / Exhibición"
+                required
+                file={photoImpulso}
+                onCapture={(file) => setPhotoImpulso(file)}
+              />
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-white/10">
+              <p className="text-xs text-slate-300">
+                Con internet, la IA califica todas las secciones en segundos. Sin internet, se guarda en cola y la IA la califica automáticamente al sincronizar con Wi-Fi.
+              </p>
+              <Button
+                type="button"
+                onClick={handleRunModernAiAnalysis}
+                disabled={aiAnalyzing || !photoFachada || !photoDestino || !photoImpulso}
+                className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold shrink-0"
+              >
+                {aiAnalyzing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Analizando fotos con IA...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {aiResult ? "🔄 Re-analizar con IA" : "🤖 Auto-Evaluar con IA"}
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {aiError && (
+              <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5">
+                ⚠️ {aiError}
+              </div>
+            )}
+
+            {aiResult && (
+              <div className="rounded-xl bg-slate-950/90 border border-emerald-500/30 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4" /> Dictamen IA ({aiResult._provider || "Visión IA"})
+                  </span>
+                  <span className="text-emerald-300 font-bold">Confianza: {aiResult.confianza_ia || 94}%</span>
+                </div>
+                <p className="text-slate-200">{aiResult.resumen_ejecutivo}</p>
+                {Array.isArray(aiResult.hallazgos_ia) && aiResult.hallazgos_ia.length > 0 && (
+                  <ul className="list-disc pl-4 text-slate-300 space-y-0.5">
+                    {aiResult.hallazgos_ia.map((h, idx) => (
+                      <li key={idx}>{h}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Paso actual */}
       {step === 0 && StepDatos}

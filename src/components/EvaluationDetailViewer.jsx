@@ -1,5 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { format } from 'date-fns';
+import { Button } from '@/components/ui/button';
+import { Sparkles, Loader2, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { analyzePdvCoolerWithAI, analyzeModernChannelWithAI } from '@/services/aiCoolerEvaluationService';
+import { updateEvaluationAdmin } from '@/repositories/evaluationsRepository';
 
 const Section = ({ title, children }) => (
   <div className="mb-6 bg-gray-800/50 p-4 rounded-lg">
@@ -273,6 +277,46 @@ const renderPdvDetails = (evaluation) => {
       <Section title="Fotografías">
         <ImageGallery photos={photos} />
       </Section>
+
+      {(payload.ai_mode || payload.ai_evaluation) && (
+        <Section title="🤖 Dictamen de Inteligencia Artificial">
+          {payload.ai_evaluation ? (
+            <div className="space-y-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-emerald-400 font-bold">
+                  Motor: {payload.ai_evaluation._provider || 'Visión IA'}
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
+                  Confianza IA: {payload.ai_evaluation.confianza_ia || 95}%
+                </span>
+              </div>
+              {payload.ai_evaluation.resumen_ejecutivo && (
+                <p className="text-gray-200 bg-gray-900/60 p-2.5 rounded border border-gray-700">
+                  {payload.ai_evaluation.resumen_ejecutivo}
+                </p>
+              )}
+              {Array.isArray(payload.ai_evaluation.analisis_parrillas) && payload.ai_evaluation.analisis_parrillas.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-cyan-400 uppercase">Análisis por Parrilla:</span>
+                  {payload.ai_evaluation.analisis_parrillas.map((p, idx) => (
+                    <div key={idx} className="flex items-center justify-between gap-2 text-xs bg-gray-900/50 px-2.5 py-1.5 rounded">
+                      <span className="font-bold text-white">Parrilla {p.parrilla || idx + 1}:</span>
+                      <span className="text-gray-300 flex-1">{p.detectado}</span>
+                      <span className={p.cumple ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                        {p.cumple ? '✓ OK' : '⚠ Revisar'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-amber-400">
+              ⏳ Capturada en modo Offline — pendiente de análisis IA al sincronizar.
+            </p>
+          )}
+        </Section>
+      )}
     </>
   );
 };
@@ -442,6 +486,37 @@ const renderCanalModernoDetails = (evaluation) => {
         <ImageGallery photos={photos.map(p => typeof p === 'string' ? { url: p } : p)} />
       </Section>
 
+      {(payload.ai_mode || payload.ai_evaluation) && (
+        <Section title="🤖 Dictamen de Inteligencia Artificial">
+          {payload.ai_evaluation ? (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-emerald-400 font-bold">
+                  Motor: {payload.ai_evaluation._provider || 'Visión IA'}
+                </span>
+                <span className="text-xs text-emerald-300 font-bold">
+                  Confianza IA: {payload.ai_evaluation.confianza_ia || 94}%
+                </span>
+              </div>
+              {payload.ai_evaluation.resumen_ejecutivo && (
+                <p className="text-gray-200">{payload.ai_evaluation.resumen_ejecutivo}</p>
+              )}
+              {Array.isArray(payload.ai_evaluation.hallazgos_ia) && payload.ai_evaluation.hallazgos_ia.length > 0 && (
+                <ul className="list-disc pl-5 text-xs text-gray-300 space-y-1">
+                  {payload.ai_evaluation.hallazgos_ia.map((h, i) => (
+                    <li key={i}>{h}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-amber-400">
+              ⏳ Capturada en modo Offline — pendiente de análisis IA al sincronizar.
+            </p>
+          )}
+        </Section>
+      )}
+
       {/* DEBUG: Mostrar JSON crudo si no hay detalles detectados */}
       {(!detallesOk.length && !detallesMal.length && !sections.length && !payload.criterios) && (
         <div className="mt-8 p-4 bg-gray-900 rounded border border-gray-700">
@@ -456,15 +531,150 @@ const renderCanalModernoDetails = (evaluation) => {
   );
 };
 
-export default function EvaluationDetailViewer({ evaluation }) {
-  if (!evaluation) return null;
-  const evaluationType = evaluation.tipo || evaluation.type;
+export default function EvaluationDetailViewer({ evaluation, onEvaluationUpdated }) {
+  const [auditing, setAuditing] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [liveEval, setLiveEval] = useState(evaluation);
+
+  if (!liveEval) return null;
+  const evaluationType = liveEval.tipo || liveEval.type;
+  const isPdv = (evaluationType || '').toUpperCase() === 'PDV';
+  const payload = typeof liveEval.payload === 'string' ? JSON.parse(liveEval.payload || '{}') : (liveEval.payload || {});
+
+  const handleRunAdminAiAudit = async () => {
+    setAuditing(true);
+    setAuditError('');
+    try {
+      let aiRes = null;
+      if (isPdv) {
+        const f1 = fixUrl(payload.photo_fachada || liveEval.photo_fachada || payload.fotos?.[0]?.url);
+        const f2 = fixUrl(payload.photo_interior || liveEval.photo_interior || payload.fotos?.[1]?.url);
+        const f3 = fixUrl(payload.photo_enfriador || liveEval.photo_enfriador || payload.fotos?.[2]?.url);
+        aiRes = await analyzePdvCoolerWithAI({
+          fotoFachada: f1,
+          fotoInterior: f2,
+          fotoEnfriador: f3,
+          coolerSize: payload.ai_planogram_size || payload.capacidad_actual || '376',
+          clientLevel: payload.nivel || 'Oro',
+        });
+      } else {
+        const isOxxo = String(payload.tipo || liveEval.tipo || payload.cadena || '').toUpperCase().includes('OXXO');
+        const pList = payload.photoUrls || payload.photos || [];
+        const f1 = fixUrl(payload.photo_fachada || liveEval.photo_fachada || pList[0]);
+        const f2 = fixUrl(payload.photo_destino || liveEval.photo_destino || pList[1]);
+        const f3 = fixUrl(payload.photo_impulso || liveEval.photo_impulso || pList[2]);
+        aiRes = await analyzeModernChannelWithAI({
+          photoFachada: f1,
+          photoDestino: f2,
+          photoImpulso: f3,
+          isOxxo,
+          targetBeerPct: isOxxo ? 45 : 41,
+        });
+      }
+
+      if (aiRes) {
+        await updateEvaluationAdmin(liveEval, {
+          ai_mode: true,
+          ai_status: 'audited_by_admin',
+          ai_evaluation: aiRes,
+        });
+        const nextPayload = { ...payload, ai_mode: true, ai_status: 'audited_by_admin', ai_evaluation: aiRes };
+        const updatedObj = { ...liveEval, payload: nextPayload };
+        setLiveEval(updatedObj);
+        if (onEvaluationUpdated) onEvaluationUpdated(updatedObj);
+      }
+    } catch (err) {
+      console.error('[EvaluationDetailViewer] AI Audit Error:', err);
+      setAuditError(err?.message || 'No se pudieron analizar las fotografías con IA.');
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  // Semáforo de Auditoría IA vs Supervisor (para validación de pago de comisiones)
+  const aiEval = payload.ai_evaluation;
+  let auditBadge = null;
+  if (aiEval) {
+    const supInvasion = String(payload.invasion || 'no').toLowerCase();
+    const aiInvasion = String(aiEval.invasion || 'no').toLowerCase();
+    const supHuecos = String(payload.huecos || 'no').toLowerCase();
+    const aiHuecos = String(aiEval.huecos || 'no').toLowerCase();
+    const hasPhotoFraud = aiEval.fotos_validas === false;
+    const hasDiscrepancy =
+      hasPhotoFraud ||
+      (aiInvasion === 'si' && supInvasion === 'no') ||
+      (aiHuecos === 'si' && supHuecos === 'no');
+
+    auditBadge = hasDiscrepancy ? (
+      <div className="mb-4 p-3 rounded-xl bg-red-950/60 border border-red-500/50 text-red-200 text-xs flex items-start gap-2.5">
+        <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+        <div>
+          <div className="font-bold text-red-300 uppercase">🔴 Discrepancia Detectada por Auditoría IA</div>
+          <p className="mt-0.5">
+            {hasPhotoFraud
+              ? (aiEval.alerta_fraude || 'Fotografía inválida o borrosa detectada por IA.')
+              : `La IA detectó en las fotos: Invasión=${aiInvasion.toUpperCase()} (${aiEval.detalle_invasion || ''}), Huecos=${aiHuecos.toUpperCase()} (${aiEval.detalle_huecos || ''}), mientras que en el formulario se reportó Invasión=${supInvasion.toUpperCase()}, Huecos=${supHuecos.toUpperCase()}.`}
+          </p>
+        </div>
+      </div>
+    ) : (
+      <div className="mb-4 p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <div>
+            <div className="font-bold text-emerald-300 uppercase">🟢 Ejecución Verificada por IA (Apta para Pago)</div>
+            <p className="text-slate-300">Las fotografías coinciden con los criterios de evaluación sin alertas de invasión ni fraude.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-1">
-      {evaluationType === 'PDV'
-        ? renderPdvDetails(evaluation)
-        : renderCanalModernoDetails(evaluation)}
+      {/* Barra Superior de Auditoría IA Bajo Demanda */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-900/90 border border-cyan-500/30">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-5 h-5 text-cyan-400" />
+          <div>
+            <div className="text-xs font-bold text-white">Auditoría de Enfriador y Ejecución con IA</div>
+            <div className="text-[11px] text-slate-400">
+              {aiEval ? `Auditada con ${aiEval._provider || 'Visión IA'}` : 'Puedes auditar las 3 fotos de esta evaluación con IA en cualquier momento'}
+            </div>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleRunAdminAiAudit}
+          disabled={auditing}
+          className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold text-xs"
+        >
+          {auditing ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              Auditando Fotos...
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+              {aiEval ? '🔄 Re-Auditar Fotos con IA' : '🤖 Auditar Fotos con IA'}
+            </>
+          )}
+        </Button>
+      </div>
+
+      {auditError && (
+        <div className="mb-4 p-2.5 rounded-lg bg-red-900/30 border border-red-500/40 text-xs text-red-300">
+          ⚠️ {auditError}
+        </div>
+      )}
+
+      {auditBadge}
+
+      {isPdv
+        ? renderPdvDetails(liveEval)
+        : renderCanalModernoDetails(liveEval)}
     </div>
   );
 }

@@ -51,45 +51,45 @@ export async function detectUserRoute(user) {
 
     let route = "";
 
-    // Prefer the current profile when online; the cache is only a fallback.
-    const online = await isOnline().catch(() => false);
-    if (online && u?.id) {
-        try {
-            const { data } = await supabase.from("profiles").select("*").eq("id", u.id).single();
-            if (data) {
-                route = data.route || data.sales_route || data.ruta || "";
-            }
-        } catch (e) { console.warn('[RouteRepo] Profile fetch failed:', e); }
-    }
-
-    // Use cached route if online profile didn't provide one
-    if (!route && cachedRoute) route = String(cachedRoute).trim();
-
-    // The auth provider persists this profile inside the SQLite-cached session.
-    if (!route && u?.profile) {
+    // 1. Instant Synchronous/Local Checks FIRST (0ms, no network ping)
+    if (u?.profile) {
         const p = u.profile;
         route = p.route || p.sales_route || p.ruta || p.route_number || "";
     }
-
-    // Fallback to Session Metadata
     if (!route && u) {
         const m = u.user_metadata || {};
         route = m.route || m.sales_route || m.ruta || m.route_number || m.user_route || "";
     }
+    if (!route && cachedRoute) {
+        route = String(cachedRoute).trim();
+    }
 
-    // 4. Critical Offline Fallback: Local DB (Metadata)
+    // 2. Local DB Allowed Routes (supervisor_allowed_sales_routes / supervisor_allowed_routes — used for ALL users in /admin/users)
     if (!route && u?.id) {
         try {
             const { getAllowedRoutes } = await import('./metadataRepository');
             const localRoutes = await getAllowedRoutes(u.id);
             if (localRoutes && localRoutes.sales && localRoutes.sales.length > 0) {
                 route = localRoutes.sales[0];
-                console.log('[RouteRepo] Recovered route from Local DB:', route);
+                console.log('[RouteRepo] Recovered route from Local DB (supervisor_allowed_sales_routes):', route);
             } else if (localRoutes && localRoutes.internal && localRoutes.internal.length > 0) {
                 route = localRoutes.internal[0];
             }
         } catch (e) {
             console.warn('[RouteRepo] Local DB route recovery failed:', e);
+        }
+    }
+
+    // 3. Only query online profile if still empty
+    if (!route && u?.id) {
+        const online = await isOnline().catch(() => false);
+        if (online) {
+            try {
+                const { data } = await supabase.from("profiles").select("route").eq("id", u.id).maybeSingle();
+                if (data?.route) {
+                    route = data.route;
+                }
+            } catch (e) { console.warn('[RouteRepo] Profile fetch failed:', e); }
         }
     }
 
@@ -266,74 +266,18 @@ export async function getAllRouteProfiles() {
  * - Sales routes come from: MySQL clients, Supabase clients, and zonas_rutas.ruta (authoritative catalog)
  * - Internal/Conquest routes come from: MySQL clients, Supabase clients, and supervisor_allowed_routes.route
  */
-export async function getAvailableRoutes() {
+let cachedAvailableRoutes = null;
+let cachedAvailableRoutesAt = 0;
+
+export async function getAvailableRoutes(forceRefresh = false) {
+    if (!forceRefresh && cachedAvailableRoutes && (Date.now() - cachedAvailableRoutesAt < 5 * 60 * 1000)) {
+        return cachedAvailableRoutes;
+    }
+
     const salesSet = new Set();
     const internalSet = new Set();
 
-    // 1. MySQL API — master client data, fully paginated
-    // DESACTIVADO POR RENDIMIENTO EXTREMO (Bloqueaba el sistema con 32k clientes)
-    // Las rutas ahora se extraen de la base local (SQLite) y de la tabla zonas_rutas de Supabase.
-    // Esto reduce el tiempo de carga de 30 segundos a < 1 segundo.
-
-    // 2. Supabase — clients table (may not exist) + zonas_rutas (catalog) + supervisor_allowed_routes (catalog)
-    try {
-        const online = await isOnline().catch(() => false);
-        if (online) {
-            const { supabase: sb } = await import('@/supabaseClient');
-
-            // Use allSettled so a 404 on 'clients' doesn't prevent zonas_rutas / supervisor_allowed_routes from loading
-            const [salesResult, internalResult, zonasRutasResult, conquestResult] = await Promise.allSettled([
-                // Sales routes registered in clients (may 404 if table not in Supabase)
-                sb.from('clients').select('sales_route').not('sales_route', 'is', null).neq('sales_route', ''),
-                // Internal routes registered in clients (may 404 if table not in Supabase)
-                sb.from('clients').select('internal_route').not('internal_route', 'is', null).neq('internal_route', ''),
-                // zonas_rutas.ruta is the authoritative sales route catalog — always populate
-                sb.from('zonas_rutas').select('ruta').not('ruta', 'is', null).neq('ruta', ''),
-                // All conquest routes already assigned to any supervisor — populate as options
-                sb.from('supervisor_allowed_routes').select('route').not('route', 'is', null).neq('route', ''),
-            ]);
-
-            // clients.sales_route
-            if (salesResult.status === 'fulfilled' && salesResult.value?.data) {
-                salesResult.value.data.forEach(r => {
-                    const sr = String(r.sales_route || '').trim();
-                    if (sr) salesSet.add(sr);
-                });
-            }
-            // clients.internal_route
-            if (internalResult.status === 'fulfilled' && internalResult.value?.data) {
-                internalResult.value.data.forEach(r => {
-                    const ir = String(r.internal_route || '').trim();
-                    if (ir) internalSet.add(ir);
-                });
-            }
-            // zonas_rutas.ruta → sales routes (authoritative catalog — always works)
-            if (zonasRutasResult.status === 'fulfilled' && zonasRutasResult.value?.data) {
-                zonasRutasResult.value.data.forEach(r => {
-                    const sr = String(r.ruta || '').trim();
-                    if (sr) salesSet.add(sr);
-                });
-                console.log(`[RouteRepo] zonas_rutas sales routes: ${zonasRutasResult.value.data.length}`);
-            } else {
-                console.warn('[RouteRepo] zonas_rutas query failed:', zonasRutasResult.reason || zonasRutasResult.value?.error);
-            }
-            // supervisor_allowed_routes.route → conquest/internal route catalog
-            if (conquestResult.status === 'fulfilled' && conquestResult.value?.data) {
-                conquestResult.value.data.forEach(r => {
-                    const ir = String(r.route || '').trim();
-                    if (ir) internalSet.add(ir);
-                });
-                console.log(`[RouteRepo] supervisor_allowed_routes internal routes: ${conquestResult.value.data.length}`);
-            } else {
-                console.warn('[RouteRepo] supervisor_allowed_routes query failed:', conquestResult.reason || conquestResult.value?.error);
-            }
-        }
-    } catch (e) {
-        console.warn('[RouteRepo] Supabase route fetch failed:', e);
-    }
-
-
-    // 3. LocalDB (SQLite on native — offline fallback)
+    // 1. LocalDB (SQLite on native / IndexedDB — instant 0ms read)
     try {
         const { getDb, isMockDb } = await import('@/lib/localDb');
         const db = await getDb();
@@ -357,13 +301,47 @@ export async function getAvailableRoutes() {
         console.warn('[RouteRepo] LocalDB route fetch failed:', e);
     }
 
+    // 2. Supabase — zonas_rutas (catalog) + supervisor_allowed_routes (catalog)
+    // Nota: la tabla 'clients' no existe en Supabase (está en MySQL), por lo que ya no lanzamos las 2 consultas 404 a 'clients'.
+    try {
+        const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (online) {
+            const { supabase: sb } = await import('@/supabaseClient');
+
+            const [zonasRutasResult, conquestResult] = await Promise.allSettled([
+                sb.from('zonas_rutas').select('ruta').not('ruta', 'is', null).neq('ruta', ''),
+                sb.from('supervisor_allowed_routes').select('route').not('route', 'is', null).neq('route', ''),
+            ]);
+
+            if (zonasRutasResult.status === 'fulfilled' && zonasRutasResult.value?.data) {
+                zonasRutasResult.value.data.forEach(r => {
+                    const sr = String(r.ruta || '').trim();
+                    if (sr) salesSet.add(sr);
+                });
+            }
+            if (conquestResult.status === 'fulfilled' && conquestResult.value?.data) {
+                conquestResult.value.data.forEach(r => {
+                    const ir = String(r.route || '').trim();
+                    if (ir) internalSet.add(ir);
+                });
+            }
+        }
+    } catch (e) {
+        console.warn('[RouteRepo] Supabase route fetch failed:', e);
+    }
+
     const salesList = Array.from(salesSet).sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
     const internalList = Array.from(internalSet).sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
 
-    console.log(`[RouteRepo] Final merged routes: ${salesList.length} sales, ${internalList.length} internal`);
-
-    return {
+    const result = {
         sales: salesList,
         internal: internalList
     };
+
+    if (salesList.length > 0 || internalList.length > 0) {
+        cachedAvailableRoutes = result;
+        cachedAvailableRoutesAt = Date.now();
+    }
+
+    return result;
 }

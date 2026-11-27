@@ -363,69 +363,174 @@ export async function deleteAssetType(name) {
     }
 }
 
-// --- Supervisor Allowed Routes/Zonas ---
-export async function getAllowedRoutes(supervisorId) {
+// --- Supervisor / User Allowed Routes/Zonas ---
+// En https://cervezasfinas.com/admin/users las rutas y zonas de TODOS los usuarios (asesores, supervisores, etc.)
+// se guardan en supervisor_allowed_sales_routes, supervisor_allowed_routes y supervisor_allowed_zonas (usando supervisor_id = user.id),
+// además de profiles.route.
+const memoryAllowedRoutesCache = new Map();
+const memoryAllowedZonasCache = new Map();
+
+export async function getAllowedRoutes(supervisorId, forceRefresh = false) {
+    if (!supervisorId) return { internal: [], sales: [] };
+    if (!forceRefresh && memoryAllowedRoutesCache.has(supervisorId)) {
+        return memoryAllowedRoutesCache.get(supervisorId);
+    }
+
     try {
         const db = await getDb();
         let internal = [];
         let sales = [];
 
-        if (isMockDb()) {
-            const internalRes = (db._storage.get('supervisor_allowed_routes') || []).filter(r => r.supervisor_id === supervisorId);
-            const salesRes = (db._storage.get('supervisor_allowed_sales_routes') || []).filter(r => r.supervisor_id === supervisorId);
-            internal = internalRes.map(r => r.route);
-            sales = salesRes.map(r => r.sales_route);
-        } else {
-            const resInternal = await db.query('SELECT route FROM supervisor_allowed_routes WHERE supervisor_id = ?', [supervisorId]);
-            const resSales = await db.query('SELECT sales_route FROM supervisor_allowed_sales_routes WHERE supervisor_id = ?', [supervisorId]);
-            internal = (resInternal.values || []).map(r => r.route);
-            sales = (resSales.values || []).map(r => r.sales_route);
-        }
+        if (!forceRefresh) {
+            if (isMockDb()) {
+                const internalRes = (db._storage.get('supervisor_allowed_routes') || []).filter(r => r.supervisor_id === supervisorId);
+                const salesRes = (db._storage.get('supervisor_allowed_sales_routes') || []).filter(r => r.supervisor_id === supervisorId);
+                internal = internalRes.map(r => r.route).filter(Boolean);
+                sales = salesRes.map(r => r.sales_route).filter(Boolean);
+            } else {
+                const [resInternal, resSales] = await Promise.all([
+                    db.query('SELECT route FROM supervisor_allowed_routes WHERE supervisor_id = ?', [supervisorId]),
+                    db.query('SELECT sales_route FROM supervisor_allowed_sales_routes WHERE supervisor_id = ?', [supervisorId]),
+                ]);
+                internal = (resInternal.values || []).map(r => r.route).filter(Boolean);
+                sales = (resSales.values || []).map(r => r.sales_route).filter(Boolean);
+            }
 
-        // Fallback: Supabase if local is empty
-        if (internal.length === 0 && sales.length === 0) {
-            try {
-                const { data: routeData } = await supabase.from('supervisor_allowed_sales_routes').select('sales_route').eq('supervisor_id', supervisorId);
-                const { data: internalData } = await supabase.from('supervisor_allowed_routes').select('route').eq('supervisor_id', supervisorId);
-                
-                if (routeData || internalData) {
-                    sales = (routeData || []).map(r => r.sales_route);
-                    internal = (internalData || []).map(r => r.route);
-                    
-                    // Optional: Save to local for next time
-                    // but we'll stick to returning for now to fix the immediate issue
-                }
-            } catch (supaErr) {
-                console.warn("Supabase fallback failed for routes", supaErr);
+            // Respaldo adicional en kvStorage (SharedPreferences de Android + localStorage) inmune a reinicios de teléfono
+            if (internal.length === 0 && sales.length === 0) {
+                try {
+                    const { kvStorage } = await import('@/services/kvStorage');
+                    const kvCached = await kvStorage.getItem(`cf_allowed_routes_v1_${supervisorId}`);
+                    if (kvCached && (kvCached.sales?.length > 0 || kvCached.internal?.length > 0)) {
+                        internal = (kvCached.internal || []).filter(Boolean);
+                        sales = (kvCached.sales || []).filter(Boolean);
+                    }
+                } catch {}
             }
         }
 
-        return { internal, sales };
+        // Si ya tenemos rutas en SQLite/IndexedDB/SharedPreferences local, devolverlas al instante (0ms)
+        if (internal.length > 0 || sales.length > 0) {
+            const result = { internal, sales };
+            memoryAllowedRoutesCache.set(supervisorId, result);
+            return result;
+        }
+
+        // Fallback online: consultar en PARALELO en Supabase y persistir en SQLite + SharedPreferences para siempre
+        try {
+            const [{ data: routeData }, { data: internalData }] = await Promise.all([
+                supabase.from('supervisor_allowed_sales_routes').select('sales_route').eq('supervisor_id', supervisorId),
+                supabase.from('supervisor_allowed_routes').select('route').eq('supervisor_id', supervisorId),
+            ]);
+
+            if (routeData || internalData) {
+                sales = (routeData || []).map(r => r.sales_route).filter(Boolean);
+                internal = (internalData || []).map(r => r.route).filter(Boolean);
+
+                if (sales.length > 0 || internal.length > 0) {
+                    const internalRows = internal.map(r => ({ supervisor_id: supervisorId, route: r }));
+                    const salesRows = sales.map(r => ({ supervisor_id: supervisorId, sales_route: r }));
+                    saveAllowedRoutesToLocal(internalRows, salesRows, null, supervisorId).catch(() => {});
+                }
+            }
+        } catch (supaErr) {
+            console.warn("Supabase fallback failed for routes", supaErr);
+        }
+
+        const result = { internal, sales };
+        if (internal.length > 0 || sales.length > 0) {
+            memoryAllowedRoutesCache.set(supervisorId, result);
+        }
+        return result;
     } catch (e) {
         console.error(e);
         return { internal: [], sales: [] };
     }
 }
 
-export async function getAllowedZonas(supervisorId) {
+export async function getAllowedZonas(supervisorId, forceRefresh = false) {
+    if (!supervisorId) return [];
+    if (!forceRefresh && memoryAllowedZonasCache.has(supervisorId)) {
+        return memoryAllowedZonasCache.get(supervisorId);
+    }
+
     try {
         const db = await getDb();
-        if (isMockDb()) {
-            const zonas = (db._storage.get('supervisor_allowed_zonas') || []).filter(r => r.supervisor_id === supervisorId);
-            return zonas.map(r => r.zona);
+        let zonas = [];
+        if (!forceRefresh) {
+            if (isMockDb()) {
+                const rows = (db._storage.get('supervisor_allowed_zonas') || []).filter(r => r.supervisor_id === supervisorId);
+                zonas = rows.map(r => r.zona).filter(Boolean);
+            } else {
+                const res = await db.query('SELECT zona FROM supervisor_allowed_zonas WHERE supervisor_id = ?', [supervisorId]);
+                zonas = (res.values || []).map(r => r.zona).filter(Boolean);
+            }
+            if (zonas.length === 0) {
+                try {
+                    const { kvStorage } = await import('@/services/kvStorage');
+                    const kvZonas = await kvStorage.getItem(`cf_allowed_zonas_v1_${supervisorId}`);
+                    if (Array.isArray(kvZonas) && kvZonas.length > 0) {
+                        zonas = kvZonas.filter(Boolean);
+                    }
+                } catch {}
+            }
         }
-        const res = await db.query('SELECT zona FROM supervisor_allowed_zonas WHERE supervisor_id = ?', [supervisorId]);
-        return (res.values || []).map(r => r.zona);
+
+        if (zonas.length > 0) {
+            memoryAllowedZonasCache.set(supervisorId, zonas);
+            return zonas;
+        }
+
+        try {
+            const { data: zonasData } = await supabase
+                .from('supervisor_allowed_zonas')
+                .select('zona')
+                .eq('supervisor_id', supervisorId);
+            if (Array.isArray(zonasData) && zonasData.length > 0) {
+                zonas = zonasData.map(r => r.zona).filter(Boolean);
+                memoryAllowedZonasCache.set(supervisorId, zonas);
+                const zonasRows = zonas.map(z => ({ supervisor_id: supervisorId, zona: z }));
+                saveAllowedRoutesToLocal(null, null, zonasRows, supervisorId).catch(() => {});
+            }
+        } catch {}
+
+        return zonas;
     } catch (e) {
         return [];
     }
 }
 
 export async function saveAllowedRoutesToLocal(internalRows, salesRows, zonasRows, supervisorId = null) {
+    if (supervisorId) {
+        memoryAllowedRoutesCache.delete(supervisorId);
+        memoryAllowedZonasCache.delete(supervisorId);
+    } else {
+        memoryAllowedRoutesCache.clear();
+        memoryAllowedZonasCache.clear();
+    }
+
+    // Persistir también en kvStorage (Android SharedPreferences + localStorage) para que jamás se pierda al reiniciar el teléfono
+    try {
+        const targetId = supervisorId || internalRows?.[0]?.supervisor_id || salesRows?.[0]?.supervisor_id || zonasRows?.[0]?.supervisor_id;
+        if (targetId) {
+            const { kvStorage } = await import('@/services/kvStorage');
+            if (internalRows || salesRows) {
+                const existing = (await kvStorage.getItem(`cf_allowed_routes_v1_${targetId}`).catch(() => null)) || { internal: [], sales: [] };
+                const nextInternal = internalRows ? internalRows.map(r => r.route).filter(Boolean) : (existing.internal || []);
+                const nextSales = salesRows ? salesRows.map(r => r.sales_route).filter(Boolean) : (existing.sales || []);
+                await kvStorage.setItem(`cf_allowed_routes_v1_${targetId}`, { internal: nextInternal, sales: nextSales });
+            }
+            if (zonasRows) {
+                const nextZonas = zonasRows.map(r => r.zona).filter(Boolean);
+                await kvStorage.setItem(`cf_allowed_zonas_v1_${targetId}`, nextZonas);
+            }
+        }
+    } catch {}
     try {
         const db = await getDb();
         if (isMockDb()) {
             const mergeForSupervisor = (key, incoming) => {
+                if (!incoming) return;
                 const existing = db._storage.get(key) || [];
                 if (!supervisorId) {
                     db._storage.set(key, [...existing, ...incoming]);
@@ -436,9 +541,9 @@ export async function saveAllowedRoutesToLocal(internalRows, salesRows, zonasRow
                     ...incoming
                 ]);
             };
-            mergeForSupervisor('supervisor_allowed_routes', internalRows || []);
-            mergeForSupervisor('supervisor_allowed_sales_routes', salesRows || []);
-            mergeForSupervisor('supervisor_allowed_zonas', zonasRows || []);
+            if (internalRows) mergeForSupervisor('supervisor_allowed_routes', internalRows);
+            if (salesRows) mergeForSupervisor('supervisor_allowed_sales_routes', salesRows);
+            if (zonasRows) mergeForSupervisor('supervisor_allowed_zonas', zonasRows);
             return;
         }
 
@@ -446,28 +551,34 @@ export async function saveAllowedRoutesToLocal(internalRows, salesRows, zonasRow
         await db.execute('BEGIN TRANSACTION');
 
         try {
-            if (supervisorId) await db.run('DELETE FROM supervisor_allowed_routes WHERE supervisor_id = ?', [supervisorId]);
-            else if (internalRows?.length) await db.run('DELETE FROM supervisor_allowed_routes WHERE supervisor_id = ?', [internalRows[0].supervisor_id]);
-            if (internalRows?.length) {
-                const placeholders = internalRows.map(() => '(?, ?)').join(',');
-                const values = internalRows.flatMap(r => [r.supervisor_id, r.route]);
-                await db.run(`INSERT INTO supervisor_allowed_routes (supervisor_id, route) VALUES ${placeholders}`, values);
+            if (internalRows !== null && internalRows !== undefined) {
+                if (supervisorId) await db.run('DELETE FROM supervisor_allowed_routes WHERE supervisor_id = ?', [supervisorId]);
+                else if (internalRows?.length) await db.run('DELETE FROM supervisor_allowed_routes WHERE supervisor_id = ?', [internalRows[0].supervisor_id]);
+                if (internalRows?.length) {
+                    const placeholders = internalRows.map(() => '(?, ?)').join(',');
+                    const values = internalRows.flatMap(r => [r.supervisor_id, r.route]);
+                    await db.run(`INSERT INTO supervisor_allowed_routes (supervisor_id, route) VALUES ${placeholders}`, values);
+                }
             }
 
-            if (supervisorId) await db.run('DELETE FROM supervisor_allowed_sales_routes WHERE supervisor_id = ?', [supervisorId]);
-            else if (salesRows?.length) await db.run('DELETE FROM supervisor_allowed_sales_routes WHERE supervisor_id = ?', [salesRows[0].supervisor_id]);
-            if (salesRows?.length) {
-                const placeholders = salesRows.map(() => '(?, ?)').join(',');
-                const values = salesRows.flatMap(r => [r.supervisor_id, r.sales_route]);
-                await db.run(`INSERT INTO supervisor_allowed_sales_routes (supervisor_id, sales_route) VALUES ${placeholders}`, values);
+            if (salesRows !== null && salesRows !== undefined) {
+                if (supervisorId) await db.run('DELETE FROM supervisor_allowed_sales_routes WHERE supervisor_id = ?', [supervisorId]);
+                else if (salesRows?.length) await db.run('DELETE FROM supervisor_allowed_sales_routes WHERE supervisor_id = ?', [salesRows[0].supervisor_id]);
+                if (salesRows?.length) {
+                    const placeholders = salesRows.map(() => '(?, ?)').join(',');
+                    const values = salesRows.flatMap(r => [r.supervisor_id, r.sales_route]);
+                    await db.run(`INSERT INTO supervisor_allowed_sales_routes (supervisor_id, sales_route) VALUES ${placeholders}`, values);
+                }
             }
 
-            if (supervisorId) await db.run('DELETE FROM supervisor_allowed_zonas WHERE supervisor_id = ?', [supervisorId]);
-            else if (zonasRows?.length) await db.run('DELETE FROM supervisor_allowed_zonas WHERE supervisor_id = ?', [zonasRows[0].supervisor_id]);
-            if (zonasRows?.length) {
-                const placeholders = zonasRows.map(() => '(?, ?)').join(',');
-                const values = zonasRows.flatMap(r => [r.supervisor_id, r.zona]);
-                await db.run(`INSERT INTO supervisor_allowed_zonas (supervisor_id, zona) VALUES ${placeholders}`, values);
+            if (zonasRows !== null && zonasRows !== undefined) {
+                if (supervisorId) await db.run('DELETE FROM supervisor_allowed_zonas WHERE supervisor_id = ?', [supervisorId]);
+                else if (zonasRows?.length) await db.run('DELETE FROM supervisor_allowed_zonas WHERE supervisor_id = ?', [zonasRows[0].supervisor_id]);
+                if (zonasRows?.length) {
+                    const placeholders = zonasRows.map(() => '(?, ?)').join(',');
+                    const values = zonasRows.flatMap(r => [r.supervisor_id, r.zona]);
+                    await db.run(`INSERT INTO supervisor_allowed_zonas (supervisor_id, zona) VALUES ${placeholders}`, values);
+                }
             }
 
             await db.execute('COMMIT');

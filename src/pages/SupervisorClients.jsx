@@ -881,11 +881,14 @@ export default function SupervisorClients({ cadenaFilter = null, readOnly = fals
 
         {evaluationClient && (
           <Dialog open={!!evaluationClient} onOpenChange={(open) => !open && setEvaluationClient(null)}>
-            <DialogContent>
+            <DialogContent className="max-w-md bg-slate-900 border border-white/10 text-white">
               <DialogHeader>
-                <DialogTitle>Evaluar {evaluationClient?.name}</DialogTitle>
+                <DialogTitle className="text-white">Evaluar {evaluationClient?.business_name || evaluationClient?.name}</DialogTitle>
               </DialogHeader>
-              <div className="flex flex-col gap-3 py-4">
+              <div className="flex flex-col gap-3 py-3">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Evaluaciones Manuales (Flujo Actual)
+                </div>
                 <Button
                   onClick={() =>
                     navigate(
@@ -913,6 +916,43 @@ export default function SupervisorClients({ cadenaFilter = null, readOnly = fals
                 >
                   🏢 CANAL MODERNO (Autoservicio)
                 </Button>
+
+                <div className="my-1 border-t border-white/10 pt-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5 mb-2.5">
+                    <span>🤖 Nuevas Evaluaciones con Inteligencia Artificial (Pruebas)</span>
+                  </div>
+                  <div className="flex flex-col gap-2.5">
+                    <Button
+                      className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold shadow-md"
+                      onClick={() =>
+                        navigate(
+                          `/evaluaciones/nueva` +
+                          `?clientId=${encodeURIComponent(evaluationClient.id)}` +
+                          `&pv=${encodeURIComponent(evaluationClient.business_name || evaluationClient.name || '')}` +
+                          `&client_code=${encodeURIComponent(evaluationClient.client_code || '')}` +
+                          `&nivel=${encodeURIComponent(evaluationClient.level || '')}` +
+                          `&ai=1`
+                        )
+                      }
+                    >
+                      🤖 PDV con IA (Enfriador por Tamaño y Parrillas)
+                    </Button>
+
+                    <Button
+                      className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold shadow-md"
+                      onClick={() => navigate('/evaluacion/canal-moderno?mode=oxxo&ai=1', { state: { client: evaluationClient, mode: 'oxxo', ai: true } })}
+                    >
+                      🤖 NUEVA EVALUACIÓN OXXO con IA
+                    </Button>
+
+                    <Button
+                      className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold shadow-md"
+                      onClick={() => navigate('/evaluacion/canal-moderno?mode=modern&ai=1', { state: { client: evaluationClient, mode: 'modern', ai: true } })}
+                    >
+                      🤖 CANAL MODERNO con IA (Autoservicio)
+                    </Button>
+                  </div>
+                </div>
               </div>
             </DialogContent>
           </Dialog>

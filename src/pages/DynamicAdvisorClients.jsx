@@ -157,70 +157,98 @@ export default function DynamicAdvisorClients() {
     return code ? `Cliente #${code}` : 'Cliente';
   }, []);
 
-  // 1. Inicializar y detectar rutas
+  // 1. Inicializar y detectar rutas de forma INSTANTÁNEA (0ms desde caché/metadata/SQLite)
+  //    En /admin/users las rutas de asesores y supervisores se guardan en:
+  //    - supervisor_allowed_sales_routes / supervisor_allowed_routes (por supervisor_id = user.id)
+  //    - profiles.route / user_metadata.route
   useEffect(() => {
     let active = true;
     const initRoutes = async () => {
-      setLoadingRoute(true);
       try {
-        let initialRoute = '';
         let userObj = user;
         if (!userObj) {
           try {
             userObj = await kvStorage.getItem('last_known_user');
           } catch (e) { }
           if (!userObj) {
-            const { data } = await supabase.auth.getUser();
-            userObj = data?.user;
+            const { data } = await supabase.auth.getSession();
+            userObj = data?.session?.user;
           }
         }
 
-        if (userObj?.id) {
-          try {
-            const cached = await kvStorage.getItem(`advisor_user_route_${userObj.id}`);
-            if (cached && active) initialRoute = String(cached).trim();
-          } catch (e) { }
+        const meta = userObj?.user_metadata || {};
+        const prof = userObj?.profile || {};
+        let initialRoute = String(
+          prof.route || prof.sales_route || prof.ruta || prof.route_number ||
+          meta.route_number || meta.route || meta.sales_route || meta.ruta || ''
+        ).trim();
+
+        // Leer caché local rápida (kvStorage + SQLite/IndexedDB de rutas asignadas en /admin/users)
+        const [cachedUserRoute, cachedGlobalRoute, localAllowed] = await Promise.all([
+          userObj?.id ? kvStorage.getItem(`advisor_user_route_${userObj.id}`).catch(() => null) : Promise.resolve(null),
+          kvStorage.getItem('last_known_route').catch(() => null),
+          userObj?.id
+            ? import('@/repositories/metadataRepository').then(({ getAllowedRoutes }) => getAllowedRoutes(userObj.id)).catch(() => ({ internal: [], sales: [] }))
+            : Promise.resolve({ internal: [], sales: [] }),
+        ]);
+
+        if (cachedUserRoute) {
+          initialRoute = String(cachedUserRoute).trim();
+        } else if (!initialRoute && cachedGlobalRoute) {
+          initialRoute = String(cachedGlobalRoute).trim();
         }
 
-        // Fallback global a last_known_route
-        if (!initialRoute) {
-          try {
-            const lkr = await kvStorage.getItem('last_known_route');
-            if (lkr && active) initialRoute = String(lkr).trim();
-          } catch (e) { }
+        let routesList = Array.from(
+          new Set([
+            ...(localAllowed?.sales || []),
+            ...(localAllowed?.internal || []),
+          ].map((r) => String(r || '').trim()).filter(Boolean))
+        );
+
+        if (!initialRoute && routesList.length > 0) {
+          initialRoute = routesList[0];
         }
 
-        let routesList = [];
-        if (userObj) {
-          // Metadata de usuario
-          const meta = userObj.user_metadata || {};
-          const metaRoute = meta.route_number || meta.route || meta.sales_route || meta.ruta || '';
-          if (metaRoute && !initialRoute) initialRoute = String(metaRoute).trim();
+        if (initialRoute && !routesList.includes(initialRoute)) {
+          routesList.unshift(initialRoute);
+        }
 
-          // Perfil de Supabase
+        // ⚡ DESBLOQUEO INSTANTÁNEO (< 20ms): si ya tenemos ruta local/asignada, mostrar de inmediato sin esperar red
+        if (active && (initialRoute || routesList.length > 0)) {
+          const fastRoute = initialRoute || routesList[0] || '';
+          setAllowedRoutes(routesList);
+          setUserRoute(fastRoute);
+          setLoadingRoute(false);
+        }
+
+        // Refresco en segundo plano (o fallback si era primera vez sin caché local)
+        const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        if (!isOffline && userObj?.id) {
           try {
-            const { data: profile } = await supabase.from('profiles').select('*').eq('id', userObj.id).single();
-            if (profile) {
-              const pRoute = profile.route || profile.sales_route || profile.ruta || profile.route_number;
-              if (pRoute && !initialRoute) initialRoute = String(pRoute).trim();
+            const { getAllowedRoutes } = await import('@/repositories/metadataRepository');
+            const freshAllowed = await getAllowedRoutes(userObj.id, routesList.length === 0);
+            const freshList = Array.from(
+              new Set([
+                ...(freshAllowed?.sales || []),
+                ...(freshAllowed?.internal || []),
+              ].map((r) => String(r || '').trim()).filter(Boolean))
+            );
+            if (freshList.length > 0) {
+              routesList = freshList;
             }
           } catch (e) { }
 
-          // Rutas de supervisor permitidas
-          try {
-            const { data: allowed } = await supabase
-              .from('supervisor_allowed_sales_routes')
-              .select('sales_route')
-              .eq('supervisor_id', userObj.id);
-
-            if (allowed && allowed.length > 0) {
-              routesList = Array.from(new Set(allowed.map(r => String(r.sales_route).trim()).filter(Boolean)));
-            }
-          } catch (e) { }
+          if (!initialRoute && routesList.length === 0) {
+            try {
+              const { data: profile } = await supabase.from('profiles').select('route').eq('id', userObj.id).maybeSingle();
+              if (profile?.route) {
+                initialRoute = String(profile.route).trim();
+              }
+            } catch (e) { }
+          }
         }
 
-        // Intentar repo de rutas si aún no tenemos ruta
-        if (!initialRoute) {
+        if (!initialRoute && routesList.length === 0) {
           try {
             const { detectUserRoute } = await import('@/repositories/routeRepository');
             const r = await detectUserRoute(userObj);
@@ -232,7 +260,7 @@ export default function DynamicAdvisorClients() {
           routesList.unshift(initialRoute);
         }
 
-        // Si la lista sigue vacía (ej. administradores), cargar catálogo disponible
+        // Solo cargar el catálogo completo si el usuario sigue sin rutas (ej. Administrador)
         if (routesList.length === 0) {
           try {
             const { getAvailableRoutes } = await import('@/repositories/routeRepository');
@@ -246,7 +274,7 @@ export default function DynamicAdvisorClients() {
         if (active) {
           setAllowedRoutes(routesList);
           const finalRoute = initialRoute || (routesList.length > 0 ? routesList[0] : '');
-          setUserRoute(finalRoute);
+          setUserRoute((prev) => prev || finalRoute);
           if (finalRoute) {
             if (userObj?.id) {
               kvStorage.setItem(`advisor_user_route_${userObj.id}`, finalRoute).catch(() => {});

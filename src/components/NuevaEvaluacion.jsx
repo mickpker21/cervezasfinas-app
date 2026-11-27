@@ -9,13 +9,14 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { CheckCircle2, AlertTriangle, ArrowRight, ArrowLeft, Camera, CameraOff, RefreshCw, MapPin, Crosshair, Loader2 } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, ArrowRight, ArrowLeft, Camera, CameraOff, RefreshCw, MapPin, Crosshair, Loader2, Sparkles, ShieldCheck } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { getClientById, updateClient } from '@/repositories/clientsRepository';
 import { loadEvaluationConfig, onEvaluationConfigUpdated, subscribeEvaluationConfig } from '@/lib/evaluationConfig';
 import { getOptionalPositionFast, warmUpGeolocation } from '@/lib/geolocation';
 import { DirectCameraField } from '@/components/common/DirectCameraModal';
 import BarcodeScanner from 'react-qr-barcode-scanner';
+import { analyzePdvCoolerWithAI, COOLER_PLANOGRAM_SPECS } from '@/services/aiCoolerEvaluationService';
 
 /** ---------- Constantes y helpers ---------- **/
 
@@ -218,10 +219,23 @@ export default function NuevaEvaluacion({
   embeddedClient = null,
   routeName, 
   onComplete, 
-  hideRedirect = false 
+  hideRedirect = false,
+  aiModeProp = false
 }) {
   const { user } = useSupabaseAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const isAiMode = useMemo(() => {
+    if (aiModeProp) return true;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('ai') === '1' || params.get('ai') === 'true';
+  }, [aiModeProp]);
+
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const [aiError, setAiError] = useState('');
+  const [selectedPlanogramSize, setSelectedPlanogramSize] = useState('376');
 
   useEffect(() => {
     warmUpGeolocation();
@@ -418,6 +432,83 @@ export default function NuevaEvaluacion({
       }
     } else {
       setForm((prev) => ({ ...prev, [name]: value }));
+    }
+  };
+
+  // Ejecuta el análisis con IA en vivo (si hay internet) y autocompleta el formulario
+  const handleRunAiAnalysis = async () => {
+    if (!fotoFachada || !fotoInterior || !fotoEnfriador) {
+      toast({
+        title: 'Faltan fotografías',
+        description: 'Primero toma las 3 fotos obligatorias (Fachada, Interior y Enfriador) para que la IA pueda evaluarlas.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast({
+        title: 'Modo Offline Detectado',
+        description: 'No hay conexión a internet. Las 3 fotos quedarán en cola y la IA calificará el enfriador automáticamente en cuanto sincronices con Wi-Fi.',
+      });
+      return;
+    }
+
+    setAiAnalyzing(true);
+    setAiError('');
+    try {
+      const targetSize = form.capacidadActual || selectedPlanogramSize || '376';
+      const aiData = await analyzePdvCoolerWithAI({
+        fotoFachada,
+        fotoInterior,
+        fotoEnfriador,
+        coolerSize: targetSize,
+        clientLevel: form.nivel || 'Oro',
+        availablePresentaciones: presentacionesForZona,
+      });
+
+      setAiResult(aiData);
+
+      // Filtrar presentaciones detectadas para que coincidan con las disponibles en la zona
+      const matchedPres = (aiData.presentaciones_detectadas || []).filter((detected) =>
+        presentacionesForZona.some((p) => normalizeKey(p) === normalizeKey(detected) || normalizeKey(detected).includes(normalizeKey(p)))
+      );
+      const canonicalPres = presentacionesForZona.filter((p) =>
+        (aiData.presentaciones_detectadas || []).some((detected) => normalizeKey(p) === normalizeKey(detected) || normalizeKey(detected).includes(normalizeKey(p)))
+      );
+
+      setForm((prev) => ({
+        ...prev,
+        estadoNegocio: aiData.estadoNegocio || prev.estadoNegocio || 'Abierto',
+        enfriadorPrimeraPos: aiData.enfriadorPrimeraPos === 'no' ? 'no' : 'si',
+        presentaciones: canonicalPres.length > 0 ? canonicalPres : (matchedPres.length > 0 ? matchedPres : prev.presentaciones),
+        invasion: aiData.invasion === 'si' ? 'si' : 'no',
+        huecos: aiData.huecos === 'si' ? 'si' : 'no',
+        skuIndividual: aiData.skuIndividual === 'no' ? 'no' : 'si',
+        skuFamiliar: aiData.skuFamiliar === 'no' ? 'no' : 'si',
+        fachadaBanderola: aiData.fachadaBanderola === 'no' ? 'no' : 'si',
+        elementosExterior: Array.isArray(aiData.elementosExterior) ? aiData.elementosExterior : prev.elementosExterior,
+        elementosInterior: Array.isArray(aiData.elementosInterior) ? aiData.elementosInterior : prev.elementosInterior,
+        productividad: ['Bueno', 'Regular', 'Malo'].includes(aiData.productividad) ? aiData.productividad : (prev.productividad || 'Bueno'),
+        capacidadActual: prev.capacidadActual || String(aiData.capacidad_estimada || targetSize).replace('_RET', ''),
+        enfriadorFunciona: aiData.enfriadorFunciona === 'no' ? 'no' : 'si',
+      }));
+
+      toast({
+        title: '🤖 Evaluación IA completada',
+        description: aiData.resumen_ejecutivo || 'Se calificaron todos los rubros del enfriador automáticamente.',
+        className: 'bg-emerald-600 text-white border-none',
+      });
+    } catch (err) {
+      console.error('[NuevaEvaluacion IA] Error:', err);
+      setAiError(err?.message || 'No se pudo conectar con la IA. Si estás sin internet, se evaluará automáticamente al sincronizar.');
+      toast({
+        title: 'IA en cola para sincronización',
+        description: 'No se pudo contactar al servidor de IA en este momento. Se evaluará al sincronizar.',
+        variant: 'destructive',
+      });
+    } finally {
+      setAiAnalyzing(false);
     }
   };
 
@@ -979,7 +1070,207 @@ export default function NuevaEvaluacion({
     },
   ];
 
-  const progressPct = Math.round(((page + 1) / steps.length) * 100);
+  const activeSteps = useMemo(() => {
+    if (!isAiMode) return steps;
+    const aiStep = {
+      key: 'ia_vision',
+      title: '🤖 Captura de Fotos y Evaluación IA por Tamaño de Enfriador',
+      content: (
+        <div className="space-y-5">
+          {/* Selector de Tamaño / Modelo de Enfriador y Guía de Parrillas */}
+          <div className="rounded-xl border border-cyan-500/30 bg-slate-900/90 p-4 text-white space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4" />
+                  1. Selecciona el Tamaño / Modelo del Enfriador a Evaluar
+                </div>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  La IA evaluará parrilla por parrilla según el planograma oficial de este tamaño y el nivel del cliente ({form.nivel || 'General'}).
+                </p>
+              </div>
+              <div className="w-56">
+                <Select
+                  value={selectedPlanogramSize}
+                  onValueChange={(val) => {
+                    setSelectedPlanogramSize(val);
+                    const cleanCap = val.replace('_RET', '');
+                    setForm((p) => ({ ...p, capacidadActual: cleanCap }));
+                  }}
+                >
+                  <SelectTrigger className="bg-slate-800 border-cyan-500/40 text-white h-9 text-xs font-bold">
+                    <SelectValue placeholder="Modelo de enfriador" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[10005] bg-slate-900 border-slate-700 text-white">
+                    <SelectItem value="144">CCV 144 (1 Pta · 3 Parrillas · Bronce+)</SelectItem>
+                    <SelectItem value="192">CCV 192 (1 Pta · 4 Parrillas · Plata+)</SelectItem>
+                    <SelectItem value="320">CCV 320 (1 Pta · 5 Parrillas · Plata/Oro+)</SelectItem>
+                    <SelectItem value="376">CCV 376 (1 Pta · 6 Parrillas · Oro+)</SelectItem>
+                    <SelectItem value="376_RET">CCV 376 Retornabilidad (5 Parrillas · Titanio)</SelectItem>
+                    <SelectItem value="500">CCV 500 (1 Pta Tecate · 5 Parrillas · Platino+)</SelectItem>
+                    <SelectItem value="552">CCV 552 (1 Pta Ancha · 6 Parrillas · Platino+)</SelectItem>
+                    <SelectItem value="900">CCV 900 (2 Puertas · 5 Niveles · Titanio)</SelectItem>
+                    <SelectItem value="1350">CCV 1350 (3 Puertas · 5 Niveles · Titanio)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Tabla guía de acomodo por parrilla del tamaño seleccionado (100% Offline) */}
+            {COOLER_PLANOGRAM_SPECS[selectedPlanogramSize] && (
+              <div className="rounded-lg bg-slate-950/80 border border-white/10 p-3 space-y-1.5">
+                <div className="text-xs font-bold text-emerald-400">
+                  📋 Acomodo Oficial: {COOLER_PLANOGRAM_SPECS[selectedPlanogramSize].title}
+                </div>
+                <div className="grid grid-cols-1 gap-1 text-[11px]">
+                  {COOLER_PLANOGRAM_SPECS[selectedPlanogramSize].shelves.map((s) => (
+                    <div key={s.shelf} className="flex flex-wrap items-center justify-between gap-2 px-2 py-1 rounded bg-white/5 border border-white/5">
+                      <span className="font-bold text-cyan-300">{s.position}:</span>
+                      <span className="text-slate-200">{s.type}</span>
+                      <span className="text-amber-300 font-medium">({s.brands})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Captura de las 3 Fotos Obligatorias */}
+          <div className="space-y-2">
+            <Label className="text-sm font-bold">2. Captura las 3 Fotografías Obligatorias de Evidencia</Label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DirectCameraField
+                label="Foto 1 — Fachada Exterior"
+                required
+                file={fotoFachada}
+                onCapture={(file) => setFotoFachada(file)}
+              />
+              <DirectCameraField
+                label="Foto 2 — Interior / POP"
+                required
+                file={fotoInterior}
+                onCapture={(file) => setFotoInterior(file)}
+              />
+              <DirectCameraField
+                label="Foto 3 — Enfriador Abierto (Parrillas)"
+                required
+                file={fotoEnfriador}
+                onCapture={(file) => setFotoEnfriador(file)}
+              />
+            </div>
+          </div>
+
+          {/* Botón de Evaluación con IA (o aviso de Cola Offline) */}
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-sm font-bold text-emerald-700 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  3. Evaluar Enfriador y PDV con Inteligencia Artificial
+                </div>
+                <p className="text-xs text-slate-600">
+                  Si tienes internet, la IA califica las 3 fotos en 4 segundos. Si estás sin chip/sin internet, puedes guardar y la IA calificará automáticamente al sincronizar con Wi-Fi.
+                </p>
+              </div>
+              <Button
+                type="button"
+                onClick={handleRunAiAnalysis}
+                disabled={aiAnalyzing || !fotoFachada || !fotoInterior || !fotoEnfriador}
+                className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold shadow-lg shrink-0"
+              >
+                {aiAnalyzing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Analizando parrillas con IA...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {aiResult ? '🔄 Volver a Analizar con IA' : '🤖 Analizar 3 Fotos con IA'}
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {aiError && (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                ⚠️ {aiError}
+              </div>
+            )}
+
+            {aiResult && (
+              <div className="rounded-xl bg-slate-900 text-white p-4 space-y-3 border border-emerald-500/40">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                    <span className="font-bold text-sm text-emerald-300">Dictamen Oficial IA ({aiResult._provider || 'Visión IA'})</span>
+                  </div>
+                  <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold">
+                    Confianza: {aiResult.confianza_ia || 95}%
+                  </span>
+                </div>
+
+                {aiResult.fotos_validas === false && (
+                  <div className="p-2.5 rounded-lg bg-red-500/20 border border-red-500/40 text-red-200 text-xs font-bold">
+                    🚨 Alerta de Fotos: {aiResult.alerta_fraude || 'Alguna fotografía no corresponde a un enfriador o fachada válida.'}
+                  </div>
+                )}
+
+                <p className="text-xs text-slate-200">{aiResult.resumen_ejecutivo}</p>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2 rounded bg-white/5 border border-white/10">
+                    <span className="text-slate-400 block text-[10px]">Invasión</span>
+                    <span className={aiResult.invasion === 'si' ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {aiResult.invasion === 'si' ? `SÍ (${aiResult.detalle_invasion || 'Detectada'})` : 'NO (Limpio)'}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded bg-white/5 border border-white/10">
+                    <span className="text-slate-400 block text-[10px]">Huecos</span>
+                    <span className={aiResult.huecos === 'si' ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {aiResult.huecos === 'si' ? `SÍ (${aiResult.detalle_huecos || 'Con huecos'})` : 'NO (Completo)'}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded bg-white/5 border border-white/10">
+                    <span className="text-slate-400 block text-[10px]">Acomodo Parrillas</span>
+                    <span className={aiResult.acomodoPorParrillaOk === false ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {aiResult.acomodoPorParrillaOk === false ? 'Revisar Orden' : 'Correcto (Ind. Arriba / Fam. Piso)'}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded bg-white/5 border border-white/10">
+                    <span className="text-slate-400 block text-[10px]">Capacidad Detectada</span>
+                    <span className="text-cyan-300 font-bold">
+                      CCV {aiResult.capacidad_estimada || selectedPlanogramSize} ({aiResult.puertas_detectadas || 1} pta / {aiResult.parrillas_detectadas || '?'} parr)
+                    </span>
+                  </div>
+                </div>
+
+                {Array.isArray(aiResult.analisis_parrillas) && aiResult.analisis_parrillas.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-bold text-cyan-300 uppercase">Desglose IA Parrilla por Parrilla:</span>
+                    <div className="grid grid-cols-1 gap-1 text-xs">
+                      {aiResult.analisis_parrillas.map((p, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 px-2.5 py-1 rounded bg-white/5">
+                          <span className="font-semibold text-white">Parrilla {p.parrilla || i + 1}:</span>
+                          <span className="text-slate-300 flex-1">{p.detectado}</span>
+                          <span className={p.cumple ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                            {p.cumple ? '✓ OK' : '⚠ Revisar'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      ),
+    };
+    return [steps[0], aiStep, ...steps.slice(1)];
+  }, [isAiMode, steps, selectedPlanogramSize, form.nivel, fotoFachada, fotoInterior, fotoEnfriador, aiAnalyzing, aiResult, aiError]);
+
+  const progressPct = Math.round(((page + 1) / activeSteps.length) * 100);
 
   // Subida de fotos
   const uploadPhoto = async (file, kind) => {
@@ -1071,7 +1362,13 @@ export default function NuevaEvaluacion({
           interior: fotoInterior,
           enfriador: fotoEnfriador
         },
-        advertencias: advFinal || []
+        advertencias: advFinal || [],
+        ...(isAiMode ? {
+          ai_mode: true,
+          ai_status: aiResult ? 'analyzed' : 'pending_offline',
+          ai_planogram_size: selectedPlanogramSize,
+          ai_evaluation: aiResult || null,
+        } : {}),
       };
 
       // 3. SAVE VIA REPOSITORY (Offline capable)
@@ -1148,7 +1445,12 @@ export default function NuevaEvaluacion({
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <img src="/logo2.jpeg" alt="logo" className="w-6 h-6 rounded" />
-          <span className="font-medium">Evaluación PDV</span>
+          <span className="font-medium">{isAiMode ? '🤖 Evaluación PDV con IA' : 'Evaluación PDV'}</span>
+          {isAiMode && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+              VISIÓN IA
+            </span>
+          )}
         </div>
         <div className="w-48 h-2 rounded bg-muted overflow-hidden">
           <div className="h-full bg-primary transition-all" style={{ width: `${progressPct}%` }} />
@@ -1158,7 +1460,7 @@ export default function NuevaEvaluacion({
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">{steps[page].title}</CardTitle>
+            <CardTitle className="text-lg">{activeSteps[page]?.title}</CardTitle>
             <div className="text-sm font-medium">Puntaje: {puntaje} / {totalWeight}</div>
           </div>
           {advertencias.length > 0 && (
@@ -1169,7 +1471,7 @@ export default function NuevaEvaluacion({
           )}
         </CardHeader>
         <CardContent>
-          {steps[page].content}
+          {activeSteps[page]?.content}
 
           <div className="flex justify-between mt-6">
             {page > 0 ? (
@@ -1178,8 +1480,8 @@ export default function NuevaEvaluacion({
               </Button>
             ) : <div />}
 
-            {page < steps.length - 1 ? (
-              <Button type="button" onClick={() => setPage((p) => Math.min(steps.length - 1, p + 1))}>
+            {page < activeSteps.length - 1 ? (
+              <Button type="button" onClick={() => setPage((p) => Math.min(activeSteps.length - 1, p + 1))}>
                 Siguiente <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             ) : (

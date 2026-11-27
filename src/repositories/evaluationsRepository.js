@@ -475,8 +475,14 @@ export async function updateEvaluationAdmin(evalItem, updates = {}) {
       ? updates.observaciones
       : basePayload.observaciones ?? basePayload.comentarios ?? basePayload.notes ?? '';
 
+  const extraPayloadFields = {};
+  if (updates.ai_evaluation !== undefined) extraPayloadFields.ai_evaluation = updates.ai_evaluation;
+  if (updates.ai_status !== undefined) extraPayloadFields.ai_status = updates.ai_status;
+  if (updates.ai_mode !== undefined) extraPayloadFields.ai_mode = updates.ai_mode;
+
   const updatedPayload = {
     ...basePayload,
+    ...extraPayloadFields,
     punto_venta: newPuntoVenta,
     nombre_tienda: newPuntoVenta,
     client_code: newClientCode,

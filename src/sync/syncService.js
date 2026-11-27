@@ -319,6 +319,7 @@ async function syncEvaluationPDV(op) {
   }
 
   // Handle Base64 photos
+  const rawBase64Photos = payload.payload?._base64_photos ? { ...payload.payload._base64_photos } : null;
   if (payload.payload?._base64_photos) {
     const photos = payload.payload._base64_photos;
 
@@ -330,6 +331,26 @@ async function syncEvaluationPDV(op) {
     }
 
     delete payload.payload._base64_photos;
+  }
+
+  // 🤖 AUTO-EVALUACIÓN IA AL SINCRONIZAR (cuando la evaluación PDV con IA fue capturada en modo Offline sin chip/internet)
+  if (payload.payload?.ai_mode && payload.payload?.ai_status === 'pending_offline') {
+    try {
+      const { analyzePdvCoolerWithAI } = await import('@/services/aiCoolerEvaluationService');
+      const aiRes = await analyzePdvCoolerWithAI({
+        fotoFachada: rawBase64Photos?.fachada || payload.payload.photo_fachada,
+        fotoInterior: rawBase64Photos?.interior || payload.payload.photo_interior,
+        fotoEnfriador: rawBase64Photos?.enfriador || payload.payload.photo_enfriador,
+        coolerSize: payload.payload.ai_planogram_size || payload.payload.capacidad_actual || '376',
+        clientLevel: payload.payload.nivel || 'Oro',
+      });
+      if (aiRes) {
+        payload.payload.ai_evaluation = aiRes;
+        payload.payload.ai_status = 'analyzed_on_sync';
+      }
+    } catch (aiErr) {
+      logger.warn('SYNC', 'AI_PDV_EVAL_ON_SYNC_SKIPPED', { id: payload.id, error: aiErr?.message });
+    }
   }
 
   const sanitizedRow = sanitizeEvalForMySQL(payload, false);
@@ -363,6 +384,7 @@ async function syncEvaluationCM(op) {
   }
 
   // Handle Base64 photos
+  const rawBase64Photos = payload.payload?._base64_photos ? { ...payload.payload._base64_photos } : null;
   if (payload.payload?._base64_photos) {
     const photos = payload.payload._base64_photos;
 
@@ -381,6 +403,27 @@ async function syncEvaluationCM(op) {
     ].filter(Boolean);
 
     delete payload.payload._base64_photos;
+  }
+
+  // 🤖 AUTO-EVALUACIÓN IA AL SINCRONIZAR (cuando la evaluación OXXO / Canal Moderno con IA fue capturada Offline)
+  if (payload.payload?.ai_mode && payload.payload?.ai_status === 'pending_offline') {
+    try {
+      const { analyzeModernChannelWithAI } = await import('@/services/aiCoolerEvaluationService');
+      const isOxxo = String(payload.tipo || payload.payload.tipo || '').toUpperCase().includes('OXXO');
+      const aiRes = await analyzeModernChannelWithAI({
+        photoFachada: rawBase64Photos?.fachada || payload.payload.photo_fachada,
+        photoDestino: rawBase64Photos?.destino || payload.payload.photo_destino,
+        photoImpulso: rawBase64Photos?.impulso || payload.payload.photo_impulso,
+        isOxxo,
+        targetBeerPct: isOxxo ? 45 : 41,
+      });
+      if (aiRes) {
+        payload.payload.ai_evaluation = aiRes;
+        payload.payload.ai_status = 'analyzed_on_sync';
+      }
+    } catch (aiErr) {
+      logger.warn('SYNC', 'AI_CM_EVAL_ON_SYNC_SKIPPED', { id: payload.id, error: aiErr?.message });
+    }
   }
 
   const sanitizedRow = sanitizeEvalForMySQL(payload, true);

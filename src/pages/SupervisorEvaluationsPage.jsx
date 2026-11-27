@@ -1347,12 +1347,33 @@ export default function SupervisorEvaluationsPage() {
                           <td className="p-3 text-slate-300">{ev.zona || 'Sin zona'}</td>
                           <td className="p-3 text-slate-300">{ev.ruta || 'Sin ruta'}</td>
                           <td className="p-3">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${(ev.tipo === 'Canal Moderno' || ev.tipo === 'CC' || ev.tipo === 'CANAL MODERNO')
-                              ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                              : 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                              }`}>
-                              {ev.tipo}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`px-2 py-1 rounded text-xs font-medium ${(ev.tipo === 'Canal Moderno' || ev.tipo === 'CC' || ev.tipo === 'CANAL MODERNO')
+                                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                                : 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                                }`}>
+                                {ev.tipo}
+                              </span>
+                              {(ev.payload?.ai_mode || ev.payload?.ai_evaluation) && (
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  ev.payload?.ai_evaluation
+                                    ? (ev.payload.ai_evaluation.fotos_validas === false ||
+                                       (ev.payload.ai_evaluation.invasion === 'si' && String(ev.payload.invasion || 'no').toLowerCase() === 'no') ||
+                                       (ev.payload.ai_evaluation.huecos === 'si' && String(ev.payload.huecos || 'no').toLowerCase() === 'no')
+                                        ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40')
+                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                }`}>
+                                  {ev.payload?.ai_evaluation
+                                    ? (ev.payload.ai_evaluation.fotos_validas === false ||
+                                       (ev.payload.ai_evaluation.invasion === 'si' && String(ev.payload.invasion || 'no').toLowerCase() === 'no') ||
+                                       (ev.payload.ai_evaluation.huecos === 'si' && String(ev.payload.huecos || 'no').toLowerCase() === 'no')
+                                        ? '🔴 IA Discrepancia'
+                                        : '🟢 IA Verificada')
+                                    : '⏳ IA Pendiente Sync'}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className={`p-3 font-bold text-lg ${getScoreColor(ev.puntaje)}`}>
                             {typeof ev.puntaje === 'number'
@@ -1439,7 +1460,13 @@ export default function SupervisorEvaluationsPage() {
               {detailsLoading ? (
                 <div className="text-center py-8 text-slate-300">Cargando detalles...</div>
               ) : (
-                <EvaluationDetailViewer evaluation={selectedEvaluation} />
+                <EvaluationDetailViewer
+                  evaluation={selectedEvaluation}
+                  onEvaluationUpdated={(updated) => {
+                    setSelectedEvaluation(updated);
+                    fetchEvaluations();
+                  }}
+                />
               )}
             </div>
             <DialogFooter className="flex gap-2">
