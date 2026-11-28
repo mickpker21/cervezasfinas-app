@@ -339,6 +339,7 @@ const AdminDashboard = () => {
                 <DashboardSection title="Gestión Comercial" icon={Briefcase}>
                     <NavCard to="/admin/clients" title="Directorio de Clientes" desc="Base de datos completa, edición y consulta." icon={Users} color="text-amber-300" />
                     <NavCard to="/admin/mapa-clientes" title="Mapa de Cobertura" desc="Visualización geoespacial de toda la cartera." icon={MapPin} color="text-blue-300" />
+                    <NavCard to="/admin/gps-tracking" title="Mapa GPS y Movimientos" desc="Recorridos, trazo por calle y posición en vivo por usuario o ruta." icon={MapPin} color="text-emerald-300" />
                     <NavCard to="/admin/visits" title="Bitácora de Visitas" desc="Auditoría de visitas geolocalizadas." icon={ClipboardCheck} color="text-green-300" />
                     <NavCard to="/admin/sales-import" title="Importar Ventas" desc="Carga masiva de historial de ventas." icon={Upload} color="text-teal-300" />
                     <NavCard to="/admin/metas" title="Metas y Objetivos" desc="Configuración de metas mensuales por ruta." icon={Target} color="text-red-300" />

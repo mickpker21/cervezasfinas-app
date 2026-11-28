@@ -478,7 +478,8 @@ export default function DynamicAdvisorClients() {
   }, [clients]);
 
   const tryRegisterVisit = async (client) => {
-    setVisitClient(client);
+    const freshest = clients.find((c) => String(c.id) === String(client?.id)) || client;
+    setVisitClient(freshest);
   };
 
   const updateClientGeolocation = async (client) => {
@@ -1136,7 +1137,23 @@ export default function DynamicAdvisorClients() {
             <DialogTitle>Registrar visita: {visitClient ? getClientDisplayName(visitClient) : ''}</DialogTitle>
           </DialogHeader>
           {visitClient && (
-            <VisitForm client={visitClient} onSave={() => setVisitClient(null)} />
+            <VisitForm
+              client={visitClient}
+              onSave={() => setVisitClient(null)}
+              onClientCoordsUpdated={(newCoords) => {
+                const updatedFields = {
+                  lat: newCoords.lat,
+                  lng: newCoords.lng,
+                  latitude: newCoords.lat,
+                  longitude: newCoords.lng,
+                  coords: newCoords,
+                };
+                setClients((prev) =>
+                  prev.map((c) => (String(c.id) === String(visitClient.id) ? { ...c, ...updatedFields } : c))
+                );
+                setVisitClient((prev) => (prev ? { ...prev, ...updatedFields } : prev));
+              }}
+            />
           )}
         </DialogContent>
       </Dialog>

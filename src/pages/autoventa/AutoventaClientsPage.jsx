@@ -14,7 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useNavigate } from "react-router-dom";
 import { FixedSizeList as List } from "@/lib/react-window-wrapper";
 import { MapPin, PackagePlus, Calendar, DollarSign, MoreVertical, Edit } from "lucide-react";
-import { getCurrentPositionSafe } from '@/lib/geolocation';
+import { getCurrentPositionSafe, getOptionalPositionFast } from '@/lib/geolocation';
 
 const PAGE_SIZE = 1000;
 
@@ -367,13 +367,22 @@ export default function AutoventaClientsPage() {
     const updateClientGeolocation = async (client) => {
         setUpdatingId(client.id);
         try {
-            const pos = await getCurrentPositionSafe({ enableHighAccuracy: true });
+            const pos = await getOptionalPositionFast(6000);
+            if (!pos) {
+                toast({ title: 'GPS no disponible', description: 'No se detectó ubicación en 6s.', variant: 'destructive' });
+                return;
+            }
             const { latitude, longitude } = pos.coords;
+            const newCoords = { lat: latitude, lng: longitude };
+            const updatedFields = { lat: latitude, lng: longitude, latitude, longitude, coords: newCoords };
             const { updateClient } = await import('@/repositories/clientsRepository');
-            await updateClient(client.id, { coords: { lat: latitude, lng: longitude } });
+            await updateClient(client.id, { lat: latitude, lng: longitude, coords: newCoords });
 
             toast({ title: '¡Ubicación actualizada!' });
-            setClients(prev => prev.map(c => c.id === client.id ? { ...c, coords: { lat: latitude, lng: longitude } } : c));
+            setClients(prev => prev.map(c => String(c.id) === String(client.id) ? { ...c, ...updatedFields } : c));
+            if (String(visitClient?.id) === String(client.id)) {
+                setVisitClient(prev => prev ? { ...prev, ...updatedFields } : prev);
+            }
         } catch (error) {
             toast({ title: 'Error obteniendo ubicación', description: error.message || 'Error desconocido', variant: 'destructive' });
         } finally {

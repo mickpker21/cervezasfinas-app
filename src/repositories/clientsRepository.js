@@ -6,6 +6,70 @@ import { Capacitor } from '@capacitor/core';
 import { fetchClientsApi, importClientsApi } from '@/lib/mysqlClients';
 
 const PAGE_SIZE = 500;
+const RECENT_COORDS_STORAGE_KEY = 'cf_recent_client_coords_v1';
+const RECENT_COORDS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+
+let recentCoordsMemoryCache = null;
+
+function getRecentCoordsMap() {
+  if (recentCoordsMemoryCache) return recentCoordsMemoryCache;
+  recentCoordsMemoryCache = {};
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RECENT_COORDS_STORAGE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const now = Date.now();
+        Object.entries(parsed).forEach(([key, val]) => {
+          if (val && Number.isFinite(Number(val.lat)) && Number.isFinite(Number(val.lng))) {
+            if (!val.updatedAt || now - val.updatedAt < RECENT_COORDS_TTL_MS) {
+              recentCoordsMemoryCache[key] = {
+                lat: Number(val.lat),
+                lng: Number(val.lng),
+                updatedAt: val.updatedAt || now,
+              };
+            }
+          }
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[clientsRepository] Error reading recent coords cache:', e);
+  }
+  return recentCoordsMemoryCache;
+}
+
+export function rememberClientCoords(clientId, clientCode, lat, lng) {
+  const numLat = Number(lat);
+  const numLng = Number(lng);
+  if (!Number.isFinite(numLat) || !Number.isFinite(numLng) || (numLat === 0 && numLng === 0)) return;
+  const map = getRecentCoordsMap();
+  const entry = { lat: numLat, lng: numLng, updatedAt: Date.now() };
+  if (clientId) map[`id:${String(clientId).trim()}`] = entry;
+  if (clientCode) map[`code:${String(clientCode).trim().toUpperCase()}`] = entry;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(RECENT_COORDS_STORAGE_KEY, JSON.stringify(map));
+    }
+  } catch (e) {
+    console.warn('[clientsRepository] Error saving recent coords cache:', e);
+  }
+}
+
+export function getRememberedClientCoords(clientOrId, clientCode = null) {
+  const map = getRecentCoordsMap();
+  const id = typeof clientOrId === 'object' ? clientOrId?.id : clientOrId;
+  const code = typeof clientOrId === 'object'
+    ? (clientOrId?.client_code || clientOrId?.cve_cliente || clientOrId?.code || clientCode)
+    : clientCode;
+  if (id && map[`id:${String(id).trim()}`]) {
+    return map[`id:${String(id).trim()}`];
+  }
+  if (code && map[`code:${String(code).trim().toUpperCase()}`]) {
+    return map[`code:${String(code).trim().toUpperCase()}`];
+  }
+  return null;
+}
 
 /**
  * Descarga TODOS los clientes de Supabase en bloques de PAGE_SIZE
@@ -211,6 +275,20 @@ function parseClientFields(c) {
   if (c.lat !== undefined && c.lat !== null) c.lat = Number(c.lat);
   if (c.lng !== undefined && c.lng !== null) c.lng = Number(c.lng);
 
+  // Overlay any recently updated client coordinates (prevents stale API/cache overwrites after "Actualizar Geo")
+  const remembered = getRememberedClientCoords(c);
+  if (remembered) {
+    c.lat = remembered.lat;
+    c.lng = remembered.lng;
+    c.latitude = remembered.lat;
+    c.longitude = remembered.lng;
+    c.coords = { lat: remembered.lat, lng: remembered.lng };
+  } else if (Number.isFinite(c.lat) && Number.isFinite(c.lng) && !(c.lat === 0 && c.lng === 0)) {
+    if (!c.coords || typeof c.coords !== 'object') {
+      c.coords = { lat: c.lat, lng: c.lng };
+    }
+  }
+
   // Parse cooler_serials
   if (typeof c.cooler_serials === 'string') {
     if (!c.cooler_serials.trim()) {
@@ -234,18 +312,23 @@ function parseClientFields(c) {
 export async function getClientByCode(code) {
   if (!code) return null;
 
+  const localMatches = await loadClientsFromLocalByCodes([code]);
+  if (localMatches?.[0] && Number(localMatches[0].synced) === 0) {
+    return parseClientFields(localMatches[0]);
+  }
+
   const online = await safeIsOnline();
 
   if (online) {
     try {
       const res = await fetchClientsApi({ client_code: code, limit: 1 });
-      return res.rows[0] ? parseClientFields(res.rows[0]) : null;
+      if (res.rows?.[0]) return parseClientFields(res.rows[0]);
     } catch (err) {
       console.error('[clientsRepository] getClientByCode error:', err);
     }
   }
 
-  // 🔁 Fallback local
+  if (localMatches?.[0]) return parseClientFields(localMatches[0]);
   const local = await loadClientsFromLocal();
   return local.find(c => String(c.client_code) === String(code)) || null;
 }
@@ -255,6 +338,13 @@ export async function getClientByCode(code) {
  */
 export async function getClientById(id) {
   if (!id) return null;
+
+  // 1. Revisar primero SQLite indexado por ID (1ms). Si tiene cambios locales pendientes (synced=0), priorizarlo.
+  const localMatches = await loadClientsFromLocalByIds([id]);
+  const localClient = localMatches?.[0] || null;
+  if (localClient && Number(localClient.synced) === 0) {
+    return parseClientFields(localClient);
+  }
 
   const online = await safeIsOnline();
 
@@ -272,7 +362,8 @@ export async function getClientById(id) {
     }
   }
 
-  // Fallback local
+  // Fallback local rápido
+  if (localClient) return parseClientFields(localClient);
   const local = await loadClientsFromLocal();
   return local.find(c => String(c.id) === String(id)) || null;
 }
@@ -1155,25 +1246,45 @@ export async function createClient(client) {
 export async function updateClient(id, updates) {
   const now = new Date().toISOString();
   
-  // 1. Get current client data to apply updates
-  let currentClient = await getClientById(id);
+  // 1. Get current client data to apply updates (graceful fallback if not yet in local DB)
+  let currentClient = await getClientById(id).catch(() => null);
   if (!currentClient) {
-    throw new Error('Client not found locally or online to update.');
+    currentClient = { id };
   }
 
   // Normalizar coordenadas para mantener en perfecta sincronía coords (JSON/obj) y lat/lng planos
   const normalizedUpdates = { ...updates };
-  if (updates.coords || updates.lat != null || updates.lng != null) {
+  const hasCoordUpdate =
+    updates.coords != null ||
+    updates.lat != null ||
+    updates.lng != null ||
+    updates.latitude != null ||
+    updates.longitude != null;
+
+  if (hasCoordUpdate) {
     const v = updates.coords;
-    let lat = updates.lat ?? (Array.isArray(v) ? v[0] : v?.lat);
-    let lng = updates.lng ?? (Array.isArray(v) ? v[1] : v?.lng);
+    let lat = updates.lat ?? updates.latitude ?? (Array.isArray(v) ? v[0] : v?.lat);
+    let lng = updates.lng ?? updates.longitude ?? (Array.isArray(v) ? v[1] : v?.lng);
     if (lat != null && lng != null) {
       lat = Number(lat);
       lng = Number(lng);
-      normalizedUpdates.lat = lat;
-      normalizedUpdates.lng = lng;
-      normalizedUpdates.coords = { lat, lng };
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        normalizedUpdates.lat = lat;
+        normalizedUpdates.lng = lng;
+        normalizedUpdates.coords = { lat, lng };
+        rememberClientCoords(
+          id,
+          currentClient?.client_code || currentClient?.cve_cliente || updates?.client_code,
+          lat,
+          lng
+        );
+      }
     }
+    delete normalizedUpdates.latitude;
+    delete normalizedUpdates.longitude;
+    delete normalizedUpdates.latitud;
+    delete normalizedUpdates.longitud;
+    delete normalizedUpdates.lon;
   }
 
   const updatedRow = {
@@ -1354,11 +1465,11 @@ async function updateLocalClient(id, updates, synced) {
     let newLng = null;
     let newCoordsStr = null;
 
-    if (cleanUpdates.coords || cleanUpdates.lat != null || cleanUpdates.lng != null) {
+    if (cleanUpdates.coords || cleanUpdates.lat != null || cleanUpdates.lng != null || cleanUpdates.latitude != null || cleanUpdates.longitude != null) {
       hasCoordsOrLatLng = true;
       const v = cleanUpdates.coords;
-      newLat = cleanUpdates.lat ?? (Array.isArray(v) ? v[0] : v?.lat);
-      newLng = cleanUpdates.lng ?? (Array.isArray(v) ? v[1] : v?.lng);
+      newLat = cleanUpdates.lat ?? cleanUpdates.latitude ?? (Array.isArray(v) ? v[0] : v?.lat);
+      newLng = cleanUpdates.lng ?? cleanUpdates.longitude ?? (Array.isArray(v) ? v[1] : v?.lng);
       if (newLat != null) newLat = Number(newLat);
       if (newLng != null) newLng = Number(newLng);
       newCoordsStr = JSON.stringify({ lat: newLat, lng: newLng });
@@ -1366,6 +1477,11 @@ async function updateLocalClient(id, updates, synced) {
       delete cleanUpdates.coords;
       delete cleanUpdates.lat;
       delete cleanUpdates.lng;
+      delete cleanUpdates.latitude;
+      delete cleanUpdates.longitude;
+      delete cleanUpdates.latitud;
+      delete cleanUpdates.longitud;
+      delete cleanUpdates.lon;
     }
 
     const keys = Object.keys(cleanUpdates);

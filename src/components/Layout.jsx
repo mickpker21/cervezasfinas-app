@@ -25,6 +25,7 @@ export const navLinks = {
     { href: '/televenta/tercerizados', label: 'Tercerizados (Promo)', icon: Users, section: '1. Comercial y Televenta' },
     { href: '/televenta/whatsapp-approvals', label: 'Validar WhatsApp', icon: MessageSquare, section: '1. Comercial y Televenta' },
     { href: '/admin/mapa-clientes', label: 'Mapa General', icon: MapPin, section: '1. Comercial y Televenta' },
+    { href: '/admin/gps-tracking', label: 'Mapa GPS y Movimientos', icon: MapIcon, section: '1. Comercial y Televenta' },
     { href: '/admin/visits', label: 'Bitácora Visitas', icon: MapPin, section: '1. Comercial y Televenta' },
     { href: '/admin/sales-import', label: 'Importar Ventas', icon: Upload, section: '1. Comercial y Televenta' },
     { href: '/admin/conquest-reports', label: 'Reportes Conquista', icon: BarChart2, section: '1. Comercial y Televenta' },
@@ -62,6 +63,7 @@ export const navLinks = {
     { href: '/warehouse/dashboard', label: 'Modo Almacén', icon: ClipboardList, section: '4. Modos Operativos y Auditoría' },
     { href: '/um6/dashboard', label: 'Modo UM6', icon: Zap, section: '4. Modos Operativos y Auditoría' },
     { href: '/ops/delivery-audit-history', label: 'Historial Auditorías', icon: ClipboardCheck, section: '4. Modos Operativos y Auditoría' },
+    { href: '/admin/gps-tracking', label: 'Rastreo GPS y Recorridos', icon: MapIcon, section: '4. Modos Operativos y Auditoría' },
     { href: '/admin/geo-audit', label: 'Auditoría GPS', icon: MapPinOff, section: '4. Modos Operativos y Auditoría' },
 
     // 5. RRHH, Sistema y Configuración
@@ -178,6 +180,7 @@ export const navLinks = {
     { href: '/supervisor/points', label: 'Puntos de Clientes', icon: Gift },
     { href: '/supervisor/visitas', label: 'Visitas', icon: MapPin },
     { href: '/supervisor/mapa-clientes', label: 'Mapa de Clientes', icon: MapPin },
+    { href: '/supervisor/gps-tracking', label: 'Mapa GPS y Movimientos', icon: MapIcon },
     { href: '/supervisor/evaluations', label: 'Evaluaciones', icon: Briefcase },
     { href: '/gerente/calls', label: 'Reporte de Llamadas', icon: BarChart2 },
     { href: '/supervisor/scorecard', label: 'Scorecard', icon: BarChart2 },

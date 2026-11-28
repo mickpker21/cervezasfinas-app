@@ -20,7 +20,7 @@ import CensoSupervisorForm from '@/components/CensoSupervisorForm';
 
 import { getClientsPaged, countLocalClients, updateClient, createClient } from '@/repositories/clientsRepository';
 import { countPendingOperations } from '@/sync/syncService';
-import { getCurrentPositionSafe } from '@/lib/geolocation';
+import { getCurrentPositionSafe, getOptionalPositionFast } from '@/lib/geolocation';
 import { getAllowedRoutes as getRoutesMeta, getAllowedZonas } from '@/repositories/metadataRepository';
 import { kvStorage } from '@/services/kvStorage';
 import { Label } from '@/components/ui/label';
@@ -465,13 +465,36 @@ export default function SupervisorClients({ cadenaFilter = null, readOnly = fals
   const updateClientGeolocation = async (client) => {
     try {
       setUpdatingId(client.id);
-      const pos = await getCurrentPositionSafe({ enableHighAccuracy: true });
+      const pos = await getOptionalPositionFast(6000);
+      if (!pos) {
+        toast({
+          title: 'GPS no disponible',
+          description: 'No se detectó ubicación en 6s. Verifica que el GPS esté activo.',
+          variant: 'destructive'
+        });
+        return;
+      }
       const { latitude, longitude } = pos.coords;
+      const newCoords = { lat: latitude, lng: longitude };
+      const updatedFields = {
+        lat: latitude,
+        lng: longitude,
+        latitude,
+        longitude,
+        coords: newCoords,
+      };
 
-      await updateClient(client.id, { coords: { lat: latitude, lng: longitude } });
+      await updateClient(client.id, { lat: latitude, lng: longitude, coords: newCoords });
 
       toast({ title: '¡Ubicación actualizada!' });
-      setClients(prev => prev.map(c => c.id === client.id ? { ...c, coords: { lat: latitude, lng: longitude } } : c));
+      setAllClients(prev => prev.map(c => String(c.id) === String(client.id) ? { ...c, ...updatedFields } : c));
+      setClients(prev => prev.map(c => String(c.id) === String(client.id) ? { ...c, ...updatedFields } : c));
+      if (String(visitClient?.id) === String(client.id)) {
+        setVisitClient(prev => prev ? { ...prev, ...updatedFields } : prev);
+      }
+      if (String(evaluationClient?.id) === String(client.id)) {
+        setEvaluationClient(prev => prev ? { ...prev, ...updatedFields } : prev);
+      }
     } catch (err) {
       toast({
         title: 'No se pudo actualizar la ubicación',

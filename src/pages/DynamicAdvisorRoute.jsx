@@ -754,8 +754,8 @@ export default function DynamicAdvisorRoute() {
 
   const tryRegisterVisit = useCallback(
     async (entry) => {
-      const client = entry?.client;
-      if (!client) {
+      const rawClient = entry?.client;
+      if (!rawClient) {
         toast({
           title: "Cliente no disponible",
           description: "No se encontro la informacion del cliente.",
@@ -763,12 +763,14 @@ export default function DynamicAdvisorRoute() {
         });
         return;
       }
+      const freshestClient =
+        scheduledClients.find((c) => String(c.id) === String(rawClient.id)) || rawClient;
       setForceMotivo(entry.pendingRequest ? "RUTA" : null);
       setActiveRequest(entry.pendingRequest || null);
-      setVisitDialogClient(client);
+      setVisitDialogClient(freshestClient);
       setVisitDialogOpen(true);
     },
-    [toast]
+    [scheduledClients, toast]
   );
 
   const updateClientGeolocation = useCallback(
@@ -790,8 +792,6 @@ export default function DynamicAdvisorRoute() {
         await updateClient(client.id, { 
           lat: latitude, 
           lng: longitude, 
-          latitude,
-          longitude,
           coords: newCoords 
         });
 
@@ -800,7 +800,7 @@ export default function DynamicAdvisorRoute() {
           description: "Se guardo la nueva ubicacion del cliente.",
         });
 
-        // Actualizar en el estado local de clientes programados de inmediato
+        // Actualizar en el estado local de clientes programados de inmediato (sin re-fetchear ni pisar con cache vieja)
         const updatedFields = {
           lat: latitude,
           lng: longitude,
@@ -808,12 +808,11 @@ export default function DynamicAdvisorRoute() {
           longitude,
           coords: newCoords
         };
-        setScheduledClients(prev => prev.map(c => c.id === client.id ? { ...c, ...updatedFields } : c));
-        if (visitDialogClient?.id === client.id) {
+        setScheduledClients(prev => prev.map(c => String(c.id) === String(client.id) ? { ...c, ...updatedFields } : c));
+        setRequestedVisits(prev => prev.map(req => String(req.client_id) === String(client.id) && req.client ? { ...req, client: { ...req.client, ...updatedFields } } : req));
+        if (String(visitDialogClient?.id) === String(client.id)) {
           setVisitDialogClient(prev => ({ ...prev, ...updatedFields }));
         }
-
-        loadRouteClients();
       } catch (error) {
         toast({
           title: "GPS omitido",
@@ -823,7 +822,7 @@ export default function DynamicAdvisorRoute() {
         setUpdatingId(null);
       }
     },
-    [loadRouteClients, toast, visitDialogClient]
+    [toast, visitDialogClient]
   );
 
   const handleAssetSuccess = useCallback(() => {
@@ -1306,6 +1305,19 @@ export default function DynamicAdvisorRoute() {
                 client={visitDialogClient}
                 onSave={handleVisitFormSaved}
                 forceMotivo={forceMotivo}
+                onClientCoordsUpdated={(newCoords) => {
+                  const updatedFields = {
+                    lat: newCoords.lat,
+                    lng: newCoords.lng,
+                    latitude: newCoords.lat,
+                    longitude: newCoords.lng,
+                    coords: newCoords,
+                  };
+                  setScheduledClients((prev) =>
+                    prev.map((c) => (String(c.id) === String(visitDialogClient.id) ? { ...c, ...updatedFields } : c))
+                  );
+                  setVisitDialogClient((prev) => (prev ? { ...prev, ...updatedFields } : prev));
+                }}
               />
             ) : (
               <div className="p-4 text-sm text-muted-foreground">

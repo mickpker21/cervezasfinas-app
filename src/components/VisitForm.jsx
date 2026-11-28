@@ -2,10 +2,61 @@ import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import { supabase } from "../supabaseClient";
 import { useSupabaseAuth } from "@/contexts/SupabaseAuthContext";
-import { Camera, MapPin, StickyNote, Sparkles } from "lucide-react";
+import { Camera, MapPin, StickyNote, Sparkles, CheckCircle2, AlertTriangle, Navigation } from "lucide-react";
 import { getOptionalPositionFast, warmUpGeolocation } from "@/lib/geolocation";
 import { getTodayMexico, getNowMexico, getMexicoDateTime } from "@/lib/dateUtils";
 import { DirectCameraModal } from "@/components/common/DirectCameraModal";
+import { getRememberedClientCoords, rememberClientCoords } from "@/repositories/clientsRepository";
+
+const MAX_VISIT_DISTANCE_METERS = 200;
+
+function extractClientCoords(c) {
+  if (!c) return null;
+  const remembered = getRememberedClientCoords(c);
+  if (remembered && Number.isFinite(remembered.lat) && Number.isFinite(remembered.lng)) {
+    return { lat: Number(remembered.lat), lng: Number(remembered.lng) };
+  }
+  const raw = c.coords;
+  if (raw) {
+    if (Array.isArray(raw) && raw.length >= 2) {
+      const la = Number(raw[0]);
+      const ln = Number(raw[1]);
+      if (Number.isFinite(la) && Number.isFinite(ln) && !(la === 0 && ln === 0)) return { lat: la, lng: ln };
+    } else if (typeof raw === "object") {
+      const la = Number(raw.lat ?? raw.latitude);
+      const ln = Number(raw.lng ?? raw.lon ?? raw.longitude);
+      if (Number.isFinite(la) && Number.isFinite(ln) && !(la === 0 && ln === 0)) return { lat: la, lng: ln };
+    } else if (typeof raw === "string" && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        return extractClientCoords({ coords: parsed });
+      } catch {
+        const parts = raw.split(",").map((s) => Number(s.trim()));
+        if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]) && !(parts[0] === 0 && parts[1] === 0)) {
+          return { lat: parts[0], lng: parts[1] };
+        }
+      }
+    }
+  }
+  const flatLat = Number(c.lat ?? c.latitude ?? c.latitud);
+  const flatLng = Number(c.lng ?? c.longitude ?? c.longitud ?? c.lon);
+  if (Number.isFinite(flatLat) && Number.isFinite(flatLng) && !(flatLat === 0 && flatLng === 0)) {
+    return { lat: flatLat, lng: flatLng };
+  }
+  return null;
+}
+
+function calcDistanceMeters(lat1, lon1, lat2, lon2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 const NOTE_PRESETS = [
   "Cliente sin inventario frío.",
@@ -16,7 +67,7 @@ const NOTE_PRESETS = [
 
 const MOTIVOS = ["Prospeccion", "Negociacion", "Cierre", "Seguimiento", "Reposición", "Visita Express"];
 
-export default function VisitForm({ client, onSave, initialData = {}, forceMotivo = null }) {
+export default function VisitForm({ client, onSave, onClientCoordsUpdated, initialData = {}, forceMotivo = null }) {
   const { user } = useSupabaseAuth();
   const [motivo, setMotivo] = useState(forceMotivo || initialData.motivo || MOTIVOS[0]);
   const [notes, setNotes] = useState(initialData.notes || "");
@@ -28,9 +79,39 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
   const [fachadaError, setFachadaError] = useState(false);
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
+  const [clientCoords, setClientCoords] = useState(() => extractClientCoords(client));
+  const [updatingClientGeo, setUpdatingClientGeo] = useState(false);
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationError, setLocationError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Mantener coordenadas del cliente siempre sincronizadas con prop + cache local + SQLite
+  useEffect(() => {
+    const freshFromProp = extractClientCoords(client);
+    if (freshFromProp) {
+      setClientCoords(freshFromProp);
+    }
+    let cancelled = false;
+    if (client?.id) {
+      (async () => {
+        try {
+          const { loadClientsFromLocalByIds } = await import("@/repositories/clientsRepository");
+          const rows = await loadClientsFromLocalByIds([client.id]);
+          if (!cancelled && rows?.[0]) {
+            const dbCoords = extractClientCoords(rows[0]);
+            if (dbCoords) {
+              setClientCoords(dbCoords);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [client?.id, client?.lat, client?.lng, client?.coords]);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +128,16 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
       cancelled = true;
     };
   }, [client?.id]);
+
+  const distanceToClient = useMemo(() => {
+    const numLat = Number(lat);
+    const numLng = Number(lng);
+    if (!lat || !lng || !Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
+    if (!clientCoords || !Number.isFinite(clientCoords.lat) || !Number.isFinite(clientCoords.lng)) return null;
+    return calcDistanceMeters(numLat, numLng, clientCoords.lat, clientCoords.lng);
+  }, [lat, lng, clientCoords]);
+
+  const isTooFar = distanceToClient !== null && distanceToClient > MAX_VISIT_DISTANCE_METERS;
 
   const resumenCliente = useMemo(() => {
     const nombre = client?.business_name || client?.name || "Cliente";
@@ -66,10 +157,61 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
         setLat(String(latitude));
         setLng(String(longitude));
       } else {
-        setLocationError("No se detectó ubicación en 6s (opcional: puedes guardar sin coordenadas).");
+        setLocationError("No se detectó señal GPS en 6s. Verifica que el GPS del teléfono esté encendido.");
       }
     } finally {
       setGettingLocation(false);
+    }
+  };
+
+  // Permite actualizar las coordenadas del cliente directamente dentro del formulario de visita
+  // y sincroniza el estado en 0ms para que al cerrar/guardar la visita NUNCA use coordenadas viejas
+  const handleUpdateClientLocationHere = async () => {
+    setLocationError("");
+    setUpdatingClientGeo(true);
+    try {
+      let currentLat = lat ? Number(lat) : null;
+      let currentLng = lng ? Number(lng) : null;
+
+      const pos = await getOptionalPositionFast(6000);
+      if (pos) {
+        currentLat = Number(pos.coords.latitude);
+        currentLng = Number(pos.coords.longitude);
+        setLat(String(currentLat));
+        setLng(String(currentLng));
+      }
+
+      if (!Number.isFinite(currentLat) || !Number.isFinite(currentLng)) {
+        setLocationError("No se pudo obtener tu ubicación GPS actual para actualizar al cliente.");
+        return;
+      }
+
+      const newCoords = { lat: currentLat, lng: currentLng };
+      // 1. Actualizar inmediatamente en memoria local y formulario (distancia pasa a 0m al instante)
+      if (client?.id || client?.client_code) {
+        rememberClientCoords(client?.id, client?.client_code || client?.cve_cliente, currentLat, currentLng);
+      }
+      setClientCoords(newCoords);
+
+      // 2. Persistir en SQLite + MySQL / cola offline
+      if (client?.id) {
+        const { updateClient } = await import("@/repositories/clientsRepository");
+        await updateClient(client.id, {
+          lat: currentLat,
+          lng: currentLng,
+          coords: newCoords,
+        });
+      }
+
+      // 3. Notificar al componente padre (DynamicAdvisorRoute, DynamicAdvisorClients, etc.)
+      if (onClientCoordsUpdated) {
+        onClientCoordsUpdated(newCoords);
+      }
+    } catch (err) {
+      console.error("[VisitForm] Error actualizando geolocalización del cliente:", err);
+      setLocationError("Se actualizó la ubicación para esta visita, pero hubo un detalle al sincronizar.");
+    } finally {
+      setUpdatingClientGeo(false);
     }
   };
 
@@ -86,16 +228,46 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
     }
     setFachadaError(false);
 
-    // Geolocalización opcional: si no se detectó en 3s, se omite sin bloquear
+    // 🔴 Geolocalización y validación de geocerca (máximo 200m del cliente)
     let finalLat = lat;
     let finalLng = lng;
     if (!finalLat || !finalLng) {
+      setGettingLocation(true);
       const quickPos = await getOptionalPositionFast(6000);
+      setGettingLocation(false);
       if (quickPos) {
         finalLat = String(quickPos.coords.latitude);
         finalLng = String(quickPos.coords.longitude);
         setLat(finalLat);
         setLng(finalLng);
+      }
+    }
+
+    const numFinalLat = Number(finalLat);
+    const numFinalLng = Number(finalLng);
+    if (!finalLat || !finalLng || !Number.isFinite(numFinalLat) || !Number.isFinite(numFinalLng)) {
+      setLocationError("⚠️ Debes tener el GPS activo y capturar tu ubicación para poder guardar la visita.");
+      const geoEl = document.getElementById("visit-geo-section");
+      if (geoEl) geoEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
+    // Re-verificar si se acaba de actualizar la ubicación del cliente en memoria/cache
+    const latestRemembered = getRememberedClientCoords(client);
+    const effectiveClientCoords = latestRemembered || clientCoords;
+    if (latestRemembered && (!clientCoords || clientCoords.lat !== latestRemembered.lat || clientCoords.lng !== latestRemembered.lng)) {
+      setClientCoords({ lat: latestRemembered.lat, lng: latestRemembered.lng });
+    }
+
+    if (effectiveClientCoords && Number.isFinite(effectiveClientCoords.lat) && Number.isFinite(effectiveClientCoords.lng)) {
+      const dist = calcDistanceMeters(numFinalLat, numFinalLng, effectiveClientCoords.lat, effectiveClientCoords.lng);
+      if (dist > MAX_VISIT_DISTANCE_METERS) {
+        setLocationError(
+          `⛔ Estás demasiado lejos del cliente (${Math.round(dist)} m · máximo permitido: ${MAX_VISIT_DISTANCE_METERS} m). Si ya estás frente al negocio y la ubicación anterior estaba desfasada, presiona el botón "Actualizar ubicación del cliente aquí".`
+        );
+        const geoEl = document.getElementById("visit-geo-section");
+        if (geoEl) geoEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
       }
     }
 
@@ -201,19 +373,21 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
     try {
       const { createVisit } = await import('@/repositories/visitsRepository');
       await createVisit(visitData);
-      if (finalLat && finalLng && client?.id) {
+      if (finalLat && finalLng && client?.id && !clientCoords) {
         try {
           const { updateClient } = await import('@/repositories/clientsRepository');
           const numLat = Number(finalLat);
           const numLng = Number(finalLng);
           if (Number.isFinite(numLat) && Number.isFinite(numLng)) {
+            const newCoords = { lat: numLat, lng: numLng };
+            rememberClientCoords(client.id, client.client_code || client.cve_cliente, numLat, numLng);
             await updateClient(client.id, {
               lat: numLat,
               lng: numLng,
-              latitude: numLat,
-              longitude: numLng,
-              coords: { lat: numLat, lng: numLng },
+              coords: newCoords,
             });
+            setClientCoords(newCoords);
+            if (onClientCoordsUpdated) onClientCoordsUpdated(newCoords);
           }
         } catch (coordErr) {
           console.warn('No se pudo actualizar coords del cliente tras visita:', coordErr);
@@ -362,11 +536,42 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
         </div>
       </section>
 
-      <section className="rounded-xl bg-white p-4 ring-1 ring-slate-200">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Geolocalización</p>
-        <p className="mt-1 text-sm text-slate-600">
-          Asegúrate de capturar tu ubicación frente al punto de venta para validar la visita.
-        </p>
+      <section
+        id="visit-geo-section"
+        className={clsx(
+          "rounded-xl bg-white p-4 ring-1 transition",
+          isTooFar || locationError ? "ring-2 ring-red-500 bg-red-50/20" : "ring-slate-200"
+        )}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Geolocalización y Validación de Distancia (Máx. {MAX_VISIT_DISTANCE_METERS}m)
+            </p>
+            <p className="mt-1 text-sm text-slate-600">
+              Debes estar a menos de {MAX_VISIT_DISTANCE_METERS} metros del negocio para cerrar y guardar la visita.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleUpdateClientLocationHere}
+            disabled={updatingClientGeo || gettingLocation}
+            className={clsx(
+              "inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold shadow-sm transition",
+              isTooFar
+                ? "bg-amber-600 text-white hover:bg-amber-500 ring-2 ring-amber-300 animate-pulse"
+                : "border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+            )}
+          >
+            <Navigation className="h-3.5 w-3.5" />
+            {updatingClientGeo
+              ? "Actualizando ubicación..."
+              : isTooFar
+              ? "📍 Estoy en el negocio: Actualizar ubicación del cliente aquí"
+              : "📍 Actualizar ubicación del cliente aquí"}
+          </button>
+        </div>
+
         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
           <button
             type="button"
@@ -375,15 +580,54 @@ export default function VisitForm({ client, onSave, initialData = {}, forceMotiv
             disabled={gettingLocation}
           >
             <MapPin className="h-4 w-4" />
-            {gettingLocation ? "Capturando ubicación..." : "Capturar ubicación"}
+            {gettingLocation ? "Capturando ubicación..." : "Capturar mi GPS"}
           </button>
           {lat && lng && (
             <div className="flex-grow rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-              Coordenadas guardadas · Lat {Number(lat).toFixed(5)} · Lng {Number(lng).toFixed(5)}
+              Tu GPS actual · Lat {Number(lat).toFixed(5)} · Lng {Number(lng).toFixed(5)}
             </div>
           )}
         </div>
-        {locationError && <div className="mt-2 text-xs text-red-500">{locationError}</div>}
+
+        {/* Semáforo en tiempo real de distancia al cliente */}
+        {lat && lng && clientCoords && distanceToClient !== null && (
+          <div
+            className={clsx(
+              "mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl border px-4 py-2.5 text-xs font-semibold",
+              isTooFar
+                ? "border-red-300 bg-red-50 text-red-700"
+                : "border-emerald-300 bg-emerald-50 text-emerald-800"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {isTooFar ? (
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+              )}
+              <span>
+                {isTooFar
+                  ? `Demasiado lejos del punto registrado: estás a ${Math.round(distanceToClient)} m (máximo permitido: ${MAX_VISIT_DISTANCE_METERS} m).`
+                  : `Ubicación validada frente al cliente: estás a ${Math.round(distanceToClient)} m (dentro del rango de ${MAX_VISIT_DISTANCE_METERS} m).`}
+              </span>
+            </div>
+            <span className="text-[11px] opacity-80">
+              Pin cliente: {Number(clientCoords.lat).toFixed(5)}, {Number(clientCoords.lng).toFixed(5)}
+            </span>
+          </div>
+        )}
+
+        {lat && lng && !clientCoords && (
+          <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-700">
+            📍 Este cliente aún no tenía coordenadas registradas. Tu ubicación actual se guardará automáticamente como la ubicación del negocio.
+          </div>
+        )}
+
+        {locationError && (
+          <div className="mt-3 rounded-xl border border-red-300 bg-red-100/80 px-4 py-2.5 text-xs font-semibold text-red-700">
+            {locationError}
+          </div>
+        )}
       </section>
 
       <footer className="sticky bottom-0 flex flex-col gap-3 rounded-xl bg-slate-900 px-4 py-4 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between">

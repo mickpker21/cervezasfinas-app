@@ -813,6 +813,8 @@ const router = createBrowserRouter([
           { path: "coortrade/scorecard", element: <SupervisorScorecard /> },
           { path: "coortrade/evaluations", element: <SupervisorEvaluationsPage /> },
           { path: "coortrade/gps", element: <GPSTrackingDashboard /> },
+          { path: "admin/gps-tracking", element: <GPSTrackingDashboard /> },
+          { path: "supervisor/gps-tracking", element: <GPSTrackingDashboard /> },
           { path: "coortrade/promotions", element: <TradePromotionsPage /> },
           { path: "gerente-trade/dashboard", element: <GerenteTradeDashboard /> },
           { path: "ops/fleet", element: <FleetDashboard /> },
